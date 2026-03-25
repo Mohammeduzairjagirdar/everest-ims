@@ -12,6 +12,7 @@ def validate_ip(ip):
         return False
 
 st.set_page_config(page_title="Infrastructure Portal", layout="wide")
+   
 
 # =====================================================
 # SINGLE GLOBAL CSS BLOCK
@@ -354,7 +355,7 @@ def import_csv_data(df, conn):
         "VM Status":"vm_status","STATUS":"status"
     })
     if "ip_address" in df.columns:
-        valid_ips = df["ip_address"].dropna().astype(str)
+        valid_ips = df["ip_address"].dropna().astype(str) 
         valid_ips = valid_ips[valid_ips.str.match(r'^\d+\.\d+\.\d+\.\d+$')]
         csv_ips = valid_ips.tolist()
         for ip in csv_ips:
@@ -884,10 +885,45 @@ elif st.session_state.page=="Host Grid":
         total_cpu=int(selected_server["total_cpu"]); total_ram=int(selected_server["total_ram"]); total_disk=int(selected_server["total_storage"])
         used_resources=pd.read_sql("SELECT COALESCE(SUM(cpu_required),0) AS used_cpu,COALESCE(SUM(ram_required),0) AS used_ram,COALESCE(SUM(storage_required),0) AS used_disk FROM vm_requests WHERE server_id=?",conn,params=(server_choice,))
         used_cpu=int(used_resources.iloc[0]["used_cpu"]); used_ram=int(used_resources.iloc[0]["used_ram"]); used_disk=int(used_resources.iloc[0]["used_disk"])
-        available_cpu =max(total_cpu-used_cpu,   512)    if total_cpu==0  else max(total_cpu-used_cpu,   1)
-        available_ram =max(total_ram-used_ram,   4096)   if total_ram==0  else max(total_ram-used_ram,   1)
-        available_disk=max(total_disk-used_disk, 100000) if total_disk==0 else max(total_disk-used_disk, 10)
-        st.sidebar.info(f"Available — CPU: {available_cpu} cores | RAM: {available_ram} GB | Disk: {available_disk} GB")
+        available_cpu  = max(total_cpu-used_cpu,   512)
+        available_ram  = max(total_ram-used_ram,   4096)
+        available_disk = max(total_disk-used_disk, 100000)
+        # vCPU utilization calculation
+        used_pct_cpu  = round((used_cpu  / total_cpu  * 100), 1) if total_cpu  > 0 else 0
+        used_pct_ram  = round((used_ram  / total_ram  * 100), 1) if total_ram  > 0 else 0
+        used_pct_disk = round((used_disk / total_disk * 100), 1) if total_disk > 0 else 0
+
+        cpu_color  = "🔴" if used_pct_cpu  > 85 else "🟡" if used_pct_cpu  > 60 else "🟢"
+        ram_color  = "🔴" if used_pct_ram  > 85 else "🟡" if used_pct_ram  > 60 else "🟢"
+        disk_color = "🔴" if used_pct_disk > 85 else "🟡" if used_pct_disk > 60 else "🟢"
+
+        bar_cpu  = min(int(used_pct_cpu),  100)
+        bar_ram  = min(int(used_pct_ram),  100)
+        bar_disk = min(int(used_pct_disk), 100)
+        col_cpu  = '#e11d48' if bar_cpu  > 85 else '#f59e0b' if bar_cpu  > 60 else '#2952d9'
+        col_ram  = '#e11d48' if bar_ram  > 85 else '#f59e0b' if bar_ram  > 60 else '#2952d9'
+        col_disk = '#e11d48' if bar_disk > 85 else '#f59e0b' if bar_disk > 60 else '#2952d9'
+
+        st.sidebar.markdown(f"""
+<div style="background:#f0f4ff;border-radius:10px;padding:14px 16px;border:1px solid #dce8ff;margin:8px 0;">
+<p style="font-weight:700;color:#1a2f6e;margin:0 0 10px 0;">📊 Server Resource Usage</p>
+<p style="font-size:13px;color:#1a2f6e;font-weight:600;margin:0 0 4px 0;">🖥️ vCPU &nbsp;&nbsp; {used_cpu} / {total_cpu} cores ({'⚠️ Over!' if used_pct_cpu > 100 else str(used_pct_cpu)+'%'})</p>
+<table width="100%" cellspacing="0" cellpadding="0"><tr>
+<td width="{bar_cpu}%" style="background:{col_cpu};height:8px;border-radius:4px 0 0 4px;"></td>
+<td width="{100-bar_cpu}%" style="background:#dce8ff;height:8px;border-radius:0 4px 4px 0;"></td>
+</tr></table>
+<p style="font-size:13px;color:#1a2f6e;font-weight:600;margin:10px 0 4px 0;">💾 RAM &nbsp;&nbsp; {used_ram} / {total_ram} GB ({'⚠️ Over!' if used_pct_ram > 100 else str(used_pct_ram)+'%'})</p>
+<table width="100%" cellspacing="0" cellpadding="0"><tr>
+<td width="{bar_ram}%" style="background:{col_ram};height:8px;border-radius:4px 0 0 4px;"></td>
+<td width="{100-bar_ram}%" style="background:#dce8ff;height:8px;border-radius:0 4px 4px 0;"></td>
+</tr></table>
+<p style="font-size:13px;color:#1a2f6e;font-weight:600;margin:10px 0 4px 0;">💿 Disk &nbsp;&nbsp; {used_disk} / {total_disk} GB ({'⚠️ Over!' if used_pct_disk > 100 else str(used_pct_disk)+'%'})</p>
+<table width="100%" cellspacing="0" cellpadding="0"><tr>
+<td width="{bar_disk}%" style="background:{col_disk};height:8px;border-radius:4px 0 0 4px;"></td>
+<td width="{100-bar_disk}%" style="background:#dce8ff;height:8px;border-radius:0 4px 4px 0;"></td>
+</tr></table>
+<p style="font-size:12px;color:#2952d9;font-weight:600;margin:10px 0 0 0;">✅ Available — CPU: {available_cpu} | RAM: {available_ram} GB | Disk: {available_disk} GB</p>
+</div>""", unsafe_allow_html=True)
         purpose=st.sidebar.selectbox("Purpose",["Development","Testing","R&D"])
         cpu =st.sidebar.number_input("CPU Cores",min_value=1, max_value=available_cpu, value=min(2,available_cpu))
         ram =st.sidebar.number_input("RAM (GB)", min_value=1, max_value=available_ram, value=min(4,available_ram))
@@ -995,11 +1031,45 @@ if "edit_ip" in st.session_state and st.session_state.edit_ip is not None and st
     current_ram =int(data["ram_required"])     if pd.notna(data["ram_required"])     else 1
     current_disk=int(data["storage_required"]) if pd.notna(data["storage_required"]) else 10
 
-    available_cpu =max(total_cpu-used_cpu,  current_cpu,  1)
-    available_ram =max(total_ram-used_ram,  current_ram,  1)
-    available_disk=max(total_disk-used_disk,current_disk, 10)
+    available_cpu  = max(total_cpu-used_cpu,  current_cpu,  512)
+    available_ram  = max(total_ram-used_ram,  current_ram,  4096)
+    available_disk = max(total_disk-used_disk,current_disk, 100000)
 
-    st.sidebar.info(f"Available — CPU: {available_cpu} cores | RAM: {available_ram} GB | Disk: {available_disk} GB")
+    used_pct_cpu  = round((used_cpu  / total_cpu  * 100), 1) if total_cpu  > 0 else 0
+    used_pct_ram  = round((used_ram  / total_ram  * 100), 1) if total_ram  > 0 else 0
+    used_pct_disk = round((used_disk / total_disk * 100), 1) if total_disk > 0 else 0
+
+    cpu_color  = "🔴" if used_pct_cpu  > 85 else "🟡" if used_pct_cpu  > 60 else "🟢"
+    ram_color  = "🔴" if used_pct_ram  > 85 else "🟡" if used_pct_ram  > 60 else "🟢"
+    disk_color = "🔴" if used_pct_disk > 85 else "🟡" if used_pct_disk > 60 else "🟢"
+
+    bar_cpu  = min(int(used_pct_cpu),  100)
+    bar_ram  = min(int(used_pct_ram),  100)
+    bar_disk = min(int(used_pct_disk), 100)
+    col_cpu  = '#e11d48' if bar_cpu  > 85 else '#f59e0b' if bar_cpu  > 60 else '#2952d9'
+    col_ram  = '#e11d48' if bar_ram  > 85 else '#f59e0b' if bar_ram  > 60 else '#2952d9'
+    col_disk = '#e11d48' if bar_disk > 85 else '#f59e0b' if bar_disk > 60 else '#2952d9'
+
+    st.sidebar.markdown(f"""
+<div style="background:#f0f4ff;border-radius:10px;padding:14px 16px;border:1px solid #dce8ff;margin:8px 0;">
+<p style="font-weight:700;color:#1a2f6e;margin:0 0 10px 0;">📊 Server Resource Usage</p>
+<p style="font-size:13px;color:#1a2f6e;font-weight:600;margin:0 0 4px 0;">🖥️ vCPU &nbsp;&nbsp; {used_cpu} / {total_cpu} cores ({'⚠️ Over!' if used_pct_cpu > 100 else str(used_pct_cpu)+'%'})</p>    
+<table width="100%" cellspacing="0" cellpadding="0"><tr>
+<td width="{bar_cpu}%" style="background:{col_cpu};height:8px;border-radius:4px 0 0 4px;"></td>
+<td width="{100-bar_cpu}%" style="background:#dce8ff;height:8px;border-radius:0 4px 4px 0;"></td>
+</tr></table>
+<p style="font-size:13px;color:#1a2f6e;font-weight:600;margin:10px 0 4px 0;">💾 RAM &nbsp;&nbsp; {used_ram} / {total_ram} GB ({'⚠️ Over!' if used_pct_ram > 100 else str(used_pct_ram)+'%'})</p>
+<table width="100%" cellspacing="0" cellpadding="0"><tr>
+<td width="{bar_ram}%" style="background:{col_ram};height:8px;border-radius:4px 0 0 4px;"></td>
+<td width="{100-bar_ram}%" style="background:#dce8ff;height:8px;border-radius:0 4px 4px 0;"></td>
+</tr></table>
+<p style="font-size:13px;color:#1a2f6e;font-weight:600;margin:10px 0 4px 0;">💿 Disk &nbsp;&nbsp; {used_disk} / {total_disk} GB ({'⚠️ Over!' if used_pct_disk > 100 else str(used_pct_disk)+'%'})</p>
+<table width="100%" cellspacing="0" cellpadding="0"><tr>
+<td width="{bar_disk}%" style="background:{col_disk};height:8px;border-radius:4px 0 0 4px;"></td>
+<td width="{100-bar_disk}%" style="background:#dce8ff;height:8px;border-radius:0 4px 4px 0;"></td>
+</tr></table>
+<p style="font-size:12px;color:#2952d9;font-weight:600;margin:10px 0 0 0;">✅ Available — CPU: {available_cpu} | RAM: {available_ram} GB | Disk: {available_disk} GB</p>
+</div>""", unsafe_allow_html=True)
     owner=st.sidebar.text_input("Owner Name",value=data["vm_name"]   if pd.notna(data["vm_name"])   else "")
     team =st.sidebar.text_input("Team Name", value=data["team_name"] if pd.notna(data["team_name"]) else "")
     if not owner.strip(): st.sidebar.error("Owner name required"); st.stop()
