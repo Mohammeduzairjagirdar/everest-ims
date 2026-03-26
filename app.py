@@ -553,20 +553,21 @@ if st.session_state.page=="landing":
                 background: #b3c2e8 !important;
                 color: #1a2f6e !important;
                 border: none !important;
-                border-radius: 10px !important;
+                border-radius: 12px !important;
                 font-weight: 700 !important;
-                padding: 0.3rem 1.2rem !important;
-                font-size: 13px !important;
-                height: auto !important;
+                font-size: 14px !important;
+                height: 38px !important;
+                min-height: unset !important;
+                max-height: 38px !important;
+                padding: 0 16px !important;
+                width: fit-content !important;
+                min-width: unset !important;
             }
             </style>
             """, unsafe_allow_html=True)
-            col_cancel, _, _ = st.columns([1, 4, 1])
-            with col_cancel:
-                if st.button("✖ Cancel", key="cancel_import_empty", use_container_width=True):
-                    st.session_state.show_csv_uploader = False
-                    st.rerun()
-
+            if st.button("✖ Cancel", key="cancel_import_empty"):
+                st.session_state.show_csv_uploader = False
+                st.rerun()
     st.markdown("<br>", unsafe_allow_html=True)
     col1,col2,col3=st.columns(3,gap="large")
     with col1:
@@ -668,8 +669,9 @@ elif st.session_state.page=="Home":
 
     if show_host_cap:
         st.markdown('<div class="section-title">🖥️ Host Capacity Overview</div>',unsafe_allow_html=True)
-        vm_count_df=pd.read_sql("SELECT server_id,COUNT(*) as running_vms FROM vm_requests GROUP BY server_id",conn)
-        servers_df["server_id"]=servers_df["server_id"].astype(str); vm_count_df["server_id"]=vm_count_df["server_id"].astype(str)
+        vm_count_df=pd.read_sql("SELECT server_id,COUNT(*) as running_vms FROM vm_requests WHERE server_id IS NOT NULL GROUP BY server_id",conn)
+        servers_df["server_id"]=pd.to_numeric(servers_df["server_id"],errors="coerce").astype("Int64")
+        vm_count_df["server_id"]=pd.to_numeric(vm_count_df["server_id"],errors="coerce").astype("Int64")
         cap_df=servers_df.merge(vm_count_df,on="server_id",how="left"); cap_df["running_vms"]=cap_df["running_vms"].fillna(0).astype(int)
         hc1,hc2=st.columns([9,1])
         with hc2: st.download_button("⬇ CSV",cap_df.to_csv(index=False).encode("utf-8"),"host_capacity.csv","text/csv",use_container_width=True)
@@ -902,9 +904,9 @@ elif st.session_state.page=="Host Grid":
         total_cpu=int(selected_server["total_cpu"]); total_ram=int(selected_server["total_ram"]); total_disk=int(selected_server["total_storage"])
         used_resources=pd.read_sql("SELECT COALESCE(SUM(cpu_required),0) AS used_cpu,COALESCE(SUM(ram_required),0) AS used_ram,COALESCE(SUM(storage_required),0) AS used_disk FROM vm_requests WHERE server_id=?",conn,params=(server_choice,))
         used_cpu=int(used_resources.iloc[0]["used_cpu"]); used_ram=int(used_resources.iloc[0]["used_ram"]); used_disk=int(used_resources.iloc[0]["used_disk"])
-        available_cpu  = max(total_cpu-used_cpu,   512)
-        available_ram  = max(total_ram-used_ram,   4096)
-        available_disk = max(total_disk-used_disk, 100000)
+        available_cpu  = max(total_cpu - used_cpu,  1)
+        available_ram  = max(total_ram - used_ram,  1)
+        available_disk = max(total_disk - used_disk, 10)
         # vCPU utilization calculation
         used_pct_cpu  = round((used_cpu  / total_cpu  * 100), 1) if total_cpu  > 0 else 0
         used_pct_ram  = round((used_ram  / total_ram  * 100), 1) if total_ram  > 0 else 0
@@ -957,10 +959,11 @@ elif st.session_state.page=="Host Grid":
     # SERVER CAPACITY TABLE
     st.markdown("<br>",unsafe_allow_html=True)
     st.markdown('<div class="section-title">📊 Server Capacity Overview</div>',unsafe_allow_html=True)
-    vm_count=pd.read_sql("SELECT server_id,COUNT(*) as running_vms FROM vm_requests GROUP BY server_id",conn)
+    vm_count=pd.read_sql("SELECT server_id,COUNT(*) as running_vms FROM vm_requests WHERE server_id IS NOT NULL GROUP BY server_id",conn)
     servers_df=pd.read_sql("SELECT * FROM servers",conn)
-    servers_df["server_id"]=servers_df["server_id"].astype(str); vm_count["server_id"]=vm_count["server_id"].astype(str)
-    capacity_df=servers_df.merge(vm_count,on="server_id",how="left"); capacity_df["running_vms"]=capacity_df["running_vms"].fillna(0)
+    servers_df["server_id"]=pd.to_numeric(servers_df["server_id"],errors="coerce").astype("Int64")
+    vm_count["server_id"]=pd.to_numeric(vm_count["server_id"],errors="coerce").astype("Int64")
+    capacity_df=servers_df.merge(vm_count,on="server_id",how="left"); capacity_df["running_vms"]=capacity_df["running_vms"].fillna(0).astype(int)
 
     if "edit_host_id" not in st.session_state: st.session_state.edit_host_id=None
 
@@ -1048,9 +1051,9 @@ if "edit_ip" in st.session_state and st.session_state.edit_ip is not None and st
     current_ram =int(data["ram_required"])     if pd.notna(data["ram_required"])     else 1
     current_disk=int(data["storage_required"]) if pd.notna(data["storage_required"]) else 10
 
-    available_cpu  = max(total_cpu-used_cpu,  current_cpu,  512)
-    available_ram  = max(total_ram-used_ram,  current_ram,  4096)
-    available_disk = max(total_disk-used_disk,current_disk, 100000)
+    available_cpu  = max(total_cpu - used_cpu,  current_cpu)
+    available_ram  = max(total_ram - used_ram,  current_ram)
+    available_disk = max(total_disk - used_disk, current_disk)
 
     used_pct_cpu  = round((used_cpu  / total_cpu  * 100), 1) if total_cpu  > 0 else 0
     used_pct_ram  = round((used_ram  / total_ram  * 100), 1) if total_ram  > 0 else 0
