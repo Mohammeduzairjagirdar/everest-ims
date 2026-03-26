@@ -547,8 +547,25 @@ if st.session_state.page=="landing":
                     st.session_state.show_csv_uploader=False
                     st.session_state.pop("pending_import_df",None); st.session_state.pop("pending_import_name",None); st.rerun()
         else:
-            if st.button("✖ Cancel",key="cancel_import_empty"):
-                st.session_state.show_csv_uploader=False; st.rerun()
+            st.markdown("""
+            <style>
+            div[data-testid="stButton"]:has(button[data-testid="baseButton-cancel_import_empty"]) button {
+                background: #b3c2e8 !important;
+                color: #1a2f6e !important;
+                border: none !important;
+                border-radius: 10px !important;
+                font-weight: 700 !important;
+                padding: 0.3rem 1.2rem !important;
+                font-size: 13px !important;
+                height: auto !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            col_cancel, _, _ = st.columns([1, 4, 1])
+            with col_cancel:
+                if st.button("✖ Cancel", key="cancel_import_empty", use_container_width=True):
+                    st.session_state.show_csv_uploader = False
+                    st.rerun()
 
     st.markdown("<br>", unsafe_allow_html=True)
     col1,col2,col3=st.columns(3,gap="large")
@@ -799,7 +816,7 @@ elif st.session_state.page=="Host Grid":
     </div>
     """, unsafe_allow_html=True)
 
-    title_col,btn_col1,btn_col2,btn_col3=st.columns([4,2,2,2])
+    title_col,btn_col1,btn_col2,btn_col3=st.columns([4,2,2,2])        
     with btn_col1:
         if st.button("➕ New Host",use_container_width=True):
             st.session_state.open_host_drawer=True; st.session_state.open_vm_drawer=False; st.rerun()
@@ -833,7 +850,7 @@ elif st.session_state.page=="Host Grid":
                             try: cpu=int(float(row["CPU"]))
                             except: cpu=0
                             try: ram=int(float(row["RAM(GB)"]))
-                            except: ram=0
+                            except: ram=0 
                             try: storage=int(float(row["STORAGE(GB)"]))
                             except: storage=0
                             if not validate_ip(host_ip): skipped+=1; continue
@@ -895,7 +912,7 @@ elif st.session_state.page=="Host Grid":
 
         cpu_color  = "🔴" if used_pct_cpu  > 85 else "🟡" if used_pct_cpu  > 60 else "🟢"
         ram_color  = "🔴" if used_pct_ram  > 85 else "🟡" if used_pct_ram  > 60 else "🟢"
-        disk_color = "🔴" if used_pct_disk > 85 else "🟡" if used_pct_disk > 60 else "🟢"
+        disk_color = "🔴" if used_pct_disk > 85 else "🟡" if used_pct_disk > 60 else "🟢"        
 
         bar_cpu  = min(int(used_pct_cpu),  100)
         bar_ram  = min(int(used_pct_ram),  100)
@@ -1073,7 +1090,7 @@ if "edit_ip" in st.session_state and st.session_state.edit_ip is not None and st
     owner=st.sidebar.text_input("Owner Name",value=data["vm_name"]   if pd.notna(data["vm_name"])   else "")
     team =st.sidebar.text_input("Team Name", value=data["team_name"] if pd.notna(data["team_name"]) else "")
     if not owner.strip(): st.sidebar.error("Owner name required"); st.stop()
-    if not team.strip():  st.sidebar.error("Team name required");  st.stop()
+    if not team.strip():  st.sidebar.error("Team name required");  st.stop()  
 
     purpose_options=["Development","Testing","R&D"]
     purpose_idx=purpose_options.index(data["purpose"]) if pd.notna(data["purpose"]) and data["purpose"] in purpose_options else 0
