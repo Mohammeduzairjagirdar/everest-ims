@@ -124,6 +124,10 @@ tbody tr td { color:#1a2f6e !important; }
     box-shadow: 0 2px 12px rgba(41,82,217,0.08);
     border: 1px solid #dce8ff;
 }
+.section-card:hover {
+    transform: translateY(-4px);
+    transition: 0.25s ease;
+}
 .section-title {
     font-size: 16px !important;
     font-weight: 700 !important;
@@ -252,6 +256,15 @@ section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]:last-of-ty
 [data-testid="stExpander"] { border: 1.5px solid #dce8ff !important; border-radius: 12px !important; background: white !important; }
 [data-testid="stExpanderToggleIcon"] { color: #2952d9 !important; }
 
+/* ── CSV Import Page ── */
+.csv-import-page {
+    min-height: 100vh;
+    background: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -336,6 +349,7 @@ if not st.session_state.logged_in:
                 user = authenticate(email, password)
                 if user:
                     st.session_state.logged_in = True
+                    st.session_state.logged_in_user = email
                     st.rerun()
                 else:
                     st.error("❌ Invalid email or password.")
@@ -428,6 +442,31 @@ conn.execute("PRAGMA journal_mode=WAL")
 conn.execute("PRAGMA busy_timeout=60000")
 servers = pd.read_sql("SELECT * FROM servers", conn)
 
+# -- Audit log table --
+conn.execute("""
+    CREATE TABLE IF NOT EXISTS audit_log (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp   TEXT    NOT NULL,
+        user        TEXT    NOT NULL,
+        action      TEXT    NOT NULL,
+        resource    TEXT    NOT NULL,
+        resource_id TEXT,
+        details     TEXT,
+        status      TEXT    DEFAULT 'success'
+    )
+""")
+conn.commit()
+
+def log_action(action, resource, resource_id="", details="", status="success"):
+    import datetime
+    user = st.session_state.get("logged_in_user", "system")
+    ts   = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute(
+        "INSERT INTO audit_log (timestamp,user,action,resource,resource_id,details,status) VALUES (?,?,?,?,?,?,?)",
+        (ts, user, action, resource, str(resource_id), str(details), status)
+    )
+    conn.commit()
+
 def check_server_capacity(server_id, cpu_req, ram_req, disk_req):
     cur = conn.cursor()
     total = cur.execute("SELECT total_cpu,total_ram,total_storage FROM servers WHERE server_id=?", (server_id,)).fetchone()
@@ -437,11 +476,143 @@ def check_server_capacity(server_id, cpu_req, ram_req, disk_req):
     if disk_req > total[2]-used[2]: return False,f"Only {total[2]-used[2]} GB storage available"
     return True,"OK"
 
+# =====================================================
+# SHARED VM DRAWER FUNCTION
+# =====================================================
+def get_best_server(cpu_req, ram_req, disk_req):
+    servers = pd.read_sql("SELECT * FROM servers", conn)
+    best_server = None
+    best_score = 999999
+    for _, server in servers.iterrows():
+        server_id = server["server_id"]
+        used = pd.read_sql("""
+            SELECT 
+                COALESCE(SUM(cpu_required),0) as used_cpu,
+                COALESCE(SUM(ram_required),0) as used_ram,
+                COALESCE(SUM(storage_required),0) as used_disk
+            FROM vm_requests
+            WHERE server_id=?
+        """, conn, params=(server_id,))
+        used_cpu = int(used.iloc[0]["used_cpu"])
+        used_ram = int(used.iloc[0]["used_ram"])
+        used_disk = int(used.iloc[0]["used_disk"])
+        total_cpu = int(server["total_cpu"])
+        total_ram = int(server["total_ram"])
+        total_disk = int(server["total_storage"])
+        avail_cpu = total_cpu - used_cpu
+        avail_ram = total_ram - used_ram
+        avail_disk = total_disk - used_disk
+        if avail_cpu >= cpu_req and avail_ram >= ram_req and avail_disk >= disk_req:
+            cpu_usage = (used_cpu / total_cpu) if total_cpu > 0 else 1
+            ram_usage = (used_ram / total_ram) if total_ram > 0 else 1
+            disk_usage = (used_disk / total_disk) if total_disk > 0 else 1
+            avg_usage = (cpu_usage + ram_usage + disk_usage) / 3
+            if avg_usage < best_score:
+                best_score = avg_usage
+                best_server = server_id
+    return best_server
+
+def render_vm_drawer():
+    if not st.session_state.get("open_vm_drawer"):
+        return
+    st.sidebar.markdown("### Create VM Request")
+    free_ips_df  = pd.read_sql("SELECT ip_address FROM ip_pool WHERE ip_status='free'", conn)
+    servers_list = pd.read_sql("SELECT * FROM servers", conn)
+    ip_choice    = st.sidebar.selectbox("VM IP Address", free_ips_df["ip_address"].tolist())
+    owner_name   = st.sidebar.text_input("Owner Name")
+    team_name    = st.sidebar.text_input("Team Name")
+    auto_mode = st.sidebar.checkbox("🤖 Auto Select Best Server", value=True)
+
+    if auto_mode:
+        cpu_input = st.sidebar.number_input("CPU Cores", min_value=1, value=2)
+        ram_input = st.sidebar.number_input("RAM (GB)", min_value=1, value=4)
+        disk_input = st.sidebar.number_input("Disk (GB)", min_value=10, value=50)
+        best_server = get_best_server(cpu_input, ram_input, disk_input)
+        if best_server:
+            server_choice = best_server
+            server_name = servers_list.loc[
+                servers_list["server_id"] == server_choice, "server_name"
+            ].values[0]
+            st.sidebar.success(f"✅ Auto Selected: {server_name}")
+        else:
+            st.sidebar.error("❌ No server available")
+            return
+        cpu = cpu_input
+        ram = ram_input
+        disk = disk_input
+    else:
+        server_choice = st.sidebar.selectbox(
+            "Server Name",
+            options=servers_list["server_id"],
+            format_func=lambda x: servers_list.loc[servers_list["server_id"]==x,"server_name"].values[0]
+        )
+        cpu  = st.sidebar.number_input("CPU Cores", min_value=1, value=2)
+        ram  = st.sidebar.number_input("RAM (GB)", min_value=1, value=4)
+        disk = st.sidebar.number_input("Disk (GB)", min_value=10, value=50)
+
+    selected_server = servers_list.loc[servers_list["server_id"]==server_choice].iloc[0]
+    total_cpu  = int(selected_server["total_cpu"])
+    total_ram  = int(selected_server["total_ram"])
+    total_disk = int(selected_server["total_storage"])
+    used_resources = pd.read_sql(
+        "SELECT COALESCE(SUM(cpu_required),0) AS used_cpu,COALESCE(SUM(ram_required),0) AS used_ram,COALESCE(SUM(storage_required),0) AS used_disk FROM vm_requests WHERE server_id=?",
+        conn, params=(server_choice,)
+    )
+    used_cpu  = int(used_resources.iloc[0]["used_cpu"])
+    used_ram  = int(used_resources.iloc[0]["used_ram"])
+    used_disk = int(used_resources.iloc[0]["used_disk"])
+    available_cpu  = max(total_cpu  - used_cpu,  1)
+    available_ram  = max(total_ram  - used_ram,  1)
+    available_disk = max(total_disk - used_disk, 10)
+    used_pct_cpu  = round((used_cpu  / total_cpu  * 100), 1) if total_cpu  > 0 else 0
+    used_pct_ram  = round((used_ram  / total_ram  * 100), 1) if total_ram  > 0 else 0
+    used_pct_disk = round((used_disk / total_disk * 100), 1) if total_disk > 0 else 0
+    bar_cpu  = min(int(used_pct_cpu),  100)
+    bar_ram  = min(int(used_pct_ram),  100)
+    bar_disk = min(int(used_pct_disk), 100)
+    col_cpu  = '#e11d48' if bar_cpu  > 85 else '#f59e0b' if bar_cpu  > 60 else '#2952d9'
+    col_ram  = '#e11d48' if bar_ram  > 85 else '#f59e0b' if bar_ram  > 60 else '#2952d9'
+    col_disk = '#e11d48' if bar_disk > 85 else '#f59e0b' if bar_disk > 60 else '#2952d9'
+    st.sidebar.markdown(f"""
+<div style="background:#f0f4ff;border-radius:10px;padding:14px 16px;border:1px solid #dce8ff;margin:8px 0;">
+<p style="font-weight:700;color:#1a2f6e;margin:0 0 10px 0;">📊 Server Resource Usage</p>
+<p style="font-size:13px;color:#1a2f6e;font-weight:600;margin:0 0 4px 0;">🖥️ vCPU &nbsp;&nbsp; {used_cpu} / {total_cpu} cores ({'⚠️ Over!' if used_pct_cpu > 100 else str(used_pct_cpu)+'%'})</p>
+<table width="100%" cellspacing="0" cellpadding="0"><tr>
+<td width="{bar_cpu}%" style="background:{col_cpu};height:8px;border-radius:4px 0 0 4px;"></td>
+<td width="{100-bar_cpu}%" style="background:#dce8ff;height:8px;border-radius:0 4px 4px 0;"></td>
+</tr></table>
+<p style="font-size:13px;color:#1a2f6e;font-weight:600;margin:10px 0 4px 0;">💾 RAM &nbsp;&nbsp; {used_ram} / {total_ram} GB ({'⚠️ Over!' if used_pct_ram > 100 else str(used_pct_ram)+'%'})</p>
+<table width="100%" cellspacing="0" cellpadding="0"><tr>
+<td width="{bar_ram}%" style="background:{col_ram};height:8px;border-radius:4px 0 0 4px;"></td>
+<td width="{100-bar_ram}%" style="background:#dce8ff;height:8px;border-radius:0 4px 4px 0;"></td>
+</tr></table>
+<p style="font-size:13px;color:#1a2f6e;font-weight:600;margin:10px 0 4px 0;">💿 Disk &nbsp;&nbsp; {used_disk} / {total_disk} GB ({'⚠️ Over!' if used_pct_disk > 100 else str(used_pct_disk)+'%'})</p>
+<table width="100%" cellspacing="0" cellpadding="0"><tr>
+<td width="{bar_disk}%" style="background:{col_disk};height:8px;border-radius:4px 0 0 4px;"></td>
+<td width="{100-bar_disk}%" style="background:#dce8ff;height:8px;border-radius:0 4px 4px 0;"></td>
+</tr></table>
+<p style="font-size:12px;color:#2952d9;font-weight:600;margin:10px 0 0 0;">✅ Available — CPU: {available_cpu} | RAM: {available_ram} GB | Disk: {available_disk} GB</p>
+</div>""", unsafe_allow_html=True)
+    purpose = st.sidebar.selectbox("Purpose", ["Development","Testing","R&D"])
+    cpu  = st.sidebar.number_input("CPU Cores", min_value=1,  max_value=available_cpu,  value=min(2,  available_cpu))
+    ram  = st.sidebar.number_input("RAM (GB)",  min_value=1,  max_value=available_ram,  value=min(4,  available_ram))
+    disk = st.sidebar.number_input("Disk (GB)", min_value=10, max_value=available_disk, value=min(50, available_disk))
+    st.sidebar.markdown("---")
+    btn_cols = st.sidebar.columns(2)
+    with btn_cols[0]:
+        if st.button("💾 Create", use_container_width=True, key="create_vm_btn"):
+            confirm_vm_dialog(owner_name, team_name, server_choice, ip_choice, cpu, ram, disk, purpose)
+    with btn_cols[1]:
+        if st.button("✖ Cancel", use_container_width=True, key="cancel_vm_btn"):
+            st.session_state.open_vm_drawer = False; st.rerun()
+
+
 for key,default in [
     ("editing_ip",None),("form_reset",0),("form_id",0),("show_form",False),
     ("edit_vm_ip",None),("ip_page",1),("open_host_drawer",False),
     ("open_vm_drawer",False),("show_host_csv",False),("confirm_vm_create",False),
-    ("edit_ip_open",False),("edit_ip_data",None),("page","landing")
+    ("edit_ip_open",False),("edit_ip_data",None),("page","landing"),
+    ("show_ip_records",False),("show_csv_uploader",False)
 ]:
     if key not in st.session_state: st.session_state[key]=default
 
@@ -465,9 +636,82 @@ def confirm_vm_dialog(owner_name,team_name,server_choice,ip_choice,cpu,ram,disk,
             cur=conn.cursor()
             cur.execute("INSERT INTO vm_requests (vm_name,team_name,server_id,ip_address,cpu_required,ram_required,storage_required,purpose,approval_status) VALUES(?,?,?,?,?,?,?,?,?)",(owner_name,team_name,server_choice,ip_choice,cpu,ram,disk,purpose,"Pending"))
             cur.execute("UPDATE ip_pool SET ip_status='assigned' WHERE ip_address=?",(ip_choice,))
-            conn.commit(); st.session_state.open_vm_drawer=False; st.rerun()
+            conn.commit()
+            log_action("CREATE_VM", "VM", resource_id=ip_choice,
+                       details=f"Owner: {owner_name} | Team: {team_name} | CPU: {cpu} | RAM: {ram}GB | Disk: {disk}GB | Purpose: {purpose}")
+            st.session_state.open_vm_drawer=False; st.rerun()
     with col2:
         if st.button("❌ Cancel",use_container_width=True): st.rerun()
+
+# =====================================================
+# CSV IMPORT DIALOG (popup)
+# =====================================================
+@st.dialog("📂 Import CSV")
+def csv_import_dialog():
+    template = "IP,HOST,TEAM NAME,USER NAME,CPU,RAM(GB),Disk(GB),VM Status,STATUS,PURPOSE\n10.0.4.1,10.0.0.1,DevOps,vm_dev_01,2,4,50,Running,assigned,Development\n10.0.4.2,10.0.0.1,QA,vm_test_01,2,4,50,Running,assigned,Testing\n10.0.4.3,10.0.0.1,Research,vm_rnd_01,4,8,100,Running,assigned,R&D\n"
+
+    st.markdown("""
+    <style>
+    div[role="dialog"] > div { max-width: 560px !important; width: 560px !important; }
+    div[role="dialog"] button:first-of-type { background: white !important; color: #1a2f6e !important; border: 1.5px solid #b3c2e8 !important; }
+    div[role="dialog"] button:last-of-type { background: white !important; color: #1a2f6e !important; border: 1.5px solid #b3c2e8 !important; }
+    div[data-testid="stDownloadButton"] > button { background: #f0f4ff !important; color: #2952d9 !important; border: 1.5px solid #b3c2e8 !important; border-radius: 10px !important; font-weight: 600 !important; height: 40px !important; }
+    div[data-testid="stDownloadButton"] > button p { color: #2952d9 !important; }
+    [data-testid="stFileUploader"] { background: #f8faff !important; border-radius: 12px !important; }
+    [data-testid="stFileUploader"] span, [data-testid="stFileUploader"] p,
+    [data-testid="stFileUploader"] small, [data-testid="stFileUploader"] label { color: #1a2f6e !important; font-weight: 600 !important; }
+    [data-testid="stFileUploader"] button { background: white !important; color: #1a2f6e !important; border: 1.5px solid #b3c2e8 !important; border-radius: 8px !important; font-weight: 600 !important; height: auto !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown("<p style='color:#6b7280;font-size:14px;margin:0 0 16px 0;'>Upload your infrastructure CSV. Download the template if needed.</p>", unsafe_allow_html=True)
+
+    st.download_button(
+        "⬇️ Download CSV Template", template,
+        file_name="vm_import_template.csv", mime="text/csv",
+        use_container_width=True
+    )
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    csv_file = st.file_uploader("Upload CSV File", type=["csv"], key="landing_csv")
+
+    if csv_file:
+        df_preview = pd.read_csv(csv_file, encoding='latin1')
+        required_columns = ["IP","HOST","TEAM NAME","USER NAME","CPU","RAM(GB)","Disk(GB)","VM Status","STATUS"]
+        missing_cols = [col for col in required_columns if col not in df_preview.columns]
+        if missing_cols:
+            st.error(f"❌ Missing columns: {', '.join(missing_cols)}")
+        else:
+            st.markdown(f"""
+            <div style="background:#f0f4ff;border-radius:10px;padding:10px 14px;
+                border:1px solid #dce8ff;margin:10px 0;display:flex;align-items:center;gap:10px;">
+                <span style="font-size:18px;">📄</span>
+                <div>
+                    <p style="color:#1a2f6e;font-weight:700;margin:0;font-size:13px;">{csv_file.name}</p>
+                    <p style="color:#6b7280;font-size:12px;margin:2px 0 0 0;">{len(df_preview)} rows detected</p>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("✅ Import", use_container_width=True, key="confirm_import"):
+                    with st.spinner("Importing..."):
+                        ip_count, server_count, vm_count, filled_count = import_csv_data(df_preview, conn)
+                    log_action("CSV_IMPORT", "BULK", details=f"File: {csv_file.name} | IPs: {ip_count}, Servers: {server_count}, VMs: {vm_count}")
+                    st.session_state.show_csv_uploader = False
+                    st.success(f"✅ Done — {ip_count} IPs, {server_count} Servers, {vm_count} VMs added.")
+                    st.rerun()
+            with c2:
+                if st.button("✖ Cancel", use_container_width=True, key="cancel_import"):
+                    st.session_state.show_csv_uploader = False
+                    st.rerun()
+    else:
+        if st.button("✖ Cancel", key="cancel_import_empty", use_container_width=True):
+            st.session_state.show_csv_uploader = False
+            st.rerun()
+
+if st.session_state.get("show_csv_uploader"):
+    csv_import_dialog()
 
 # =====================================================
 # LANDING PAGE
@@ -489,15 +733,8 @@ if st.session_state.page=="landing":
     section[data-testid="stMain"] { background:linear-gradient(145deg,#2952d9 0%,#1a3ab8 60%,#122a8a 100%) !important; min-height:100vh !important; }
     .stApp { background:linear-gradient(145deg,#2952d9 0%,#1a3ab8 60%,#122a8a 100%) !important; }
     div[data-testid="stButton"] > button { background:#b3c2e8 !important; color:#1a2f6e !important; border:none !important; border-radius:20px !important; box-shadow:0 2px 8px rgba(0,0,0,0.08) !important; font-weight:700 !important; height:130px !important; font-size:16px !important; }
-    [data-testid="stFileUploader"] { background:white !important; border-radius:12px !important; }
-    [data-testid="stFileUploader"] span, [data-testid="stFileUploader"] p, [data-testid="stFileUploader"] small, [data-testid="stFileUploader"] label { color:#1a2f6e !important; font-weight:600 !important; }
-    [data-testid="stFileUploader"] button { background:white !important; color:#1a2f6e !important; border:1.5px solid #1a2f6e !important; border-radius:8px !important; font-weight:600 !important; height:auto !important; }
-    [data-testid="stFileDropzoneInstructions"] { color:#1a2f6e !important; }
-    [data-testid="stFileDropzoneInstructions"] * { color:#1a2f6e !important; }
     div[data-testid="stButton"] > button:hover { background:#c5d0f0 !important; }
     button p { color:#1a2f6e !important; font-weight:700 !important; }
-    div[data-testid="stDownloadButton"] > button { background:#b3c2e8 !important; color:#1a2f6e !important; border:none !important; border-radius:20px !important; font-weight:700 !important; box-shadow:0 2px 8px rgba(0,0,0,0.08) !important; height:auto !important; }
-    div[data-testid="stDownloadButton"] > button:hover { background:#c5d0f0 !important; }
     </style>""", unsafe_allow_html=True)
 
     st.markdown('<div class="landing-title"> IP Management Portal</div>', unsafe_allow_html=True)
@@ -505,85 +742,28 @@ if st.session_state.page=="landing":
 
     _,center_col,_=st.columns([3,2,3])
     with center_col:
-        template="IP,HOST,TEAM NAME,USER NAME,CPU,RAM(GB),Disk(GB),VM Status,STATUS,PURPOSE\n10.0.4.1,10.0.0.1,DevOps,vm_dev_01,2,4,50,Running,assigned,Development\n10.0.4.2,10.0.0.1,QA,vm_test_01,2,4,50,Running,assigned,Testing\n10.0.4.3,10.0.0.1,Research,vm_rnd_01,4,8,100,Running,assigned,R&D\n"
-        st.download_button("⬇ Download CSV Template",template,file_name="vm_import_template.csv",mime="text/csv",use_container_width=True,type="secondary")
-        if st.button("📂 Import CSV",use_container_width=True): st.session_state.show_csv_uploader=True
+        if st.button("📂  Import CSV", use_container_width=True):
+            st.session_state.show_csv_uploader = True
+            st.rerun()
 
-    if st.session_state.get("show_csv_uploader"):
-        csv_file=st.file_uploader("Choose a CSV file",type=["csv"],key="landing_csv")
-        if csv_file:
-            df_preview=pd.read_csv(csv_file,encoding='latin1')
-            required_columns=["IP","HOST","TEAM NAME","USER NAME","CPU","RAM(GB)","Disk(GB)","VM Status","STATUS"]
-            missing_cols=[col for col in required_columns if col not in df_preview.columns]
-            if missing_cols: st.error(f"❌ CSV missing required columns: {', '.join(missing_cols)}"); st.stop()
-            st.session_state["pending_import_df"]=df_preview; st.session_state["pending_import_name"]=csv_file.name
-            st.info(f"📄 **{csv_file.name}** — {len(df_preview)} rows detected.")
-            c1,c2=st.columns(2)
-            with c1:
-                if st.button("✅ Import",use_container_width=True,key="confirm_import"):
-                    df_to_import=st.session_state.get("pending_import_df")
-                    if df_to_import is not None:
-                        with st.spinner("Importing..."):
-                            ip_count,server_count,vm_count,filled_count=import_csv_data(df_to_import,conn)
-                        st.session_state.show_csv_uploader=False
-                        st.session_state.pop("pending_import_df",None); st.session_state.pop("pending_import_name",None)
-                        st.success(f"✅ Imported — {ip_count} IPs, {server_count} Servers, {vm_count} VMs added."); st.rerun()
-            with c2:
-                if st.button("✖ Cancel",use_container_width=True,key="cancel_import"):
-                    st.session_state.show_csv_uploader=False
-                    st.session_state.pop("pending_import_df",None); st.session_state.pop("pending_import_name",None); st.rerun()
-        elif st.session_state.get("pending_import_df") is not None:
-            df_preview=st.session_state["pending_import_df"]; fname=st.session_state.get("pending_import_name","file.csv")
-            st.info(f"📄 **{fname}** — {len(df_preview)} rows detected.")
-            c1,c2=st.columns(2)
-            with c1:
-                if st.button("✅ Import",use_container_width=True,key="confirm_import"):
-                    ip_count,server_count,vm_count,filled_count=import_csv_data(df_preview,conn)
-                    st.session_state.show_csv_uploader=False
-                    st.session_state.pop("pending_import_df",None); st.session_state.pop("pending_import_name",None)
-                    st.success(f"✅ Imported — {ip_count} IPs, {server_count} Servers, {vm_count} VMs added."); st.rerun()
-            with c2:
-                if st.button("✖ Cancel",use_container_width=True,key="cancel_import"):
-                    st.session_state.show_csv_uploader=False
-                    st.session_state.pop("pending_import_df",None); st.session_state.pop("pending_import_name",None); st.rerun()
-        else:
-            st.markdown("""
-            <style>
-            div[data-testid="stButton"]:has(button[data-testid="baseButton-cancel_import_empty"]) button {
-                background: #b3c2e8 !important;
-                color: #1a2f6e !important;
-                border: none !important;
-                border-radius: 12px !important;
-                font-weight: 700 !important;
-                font-size: 14px !important;
-                height: 38px !important;
-                min-height: unset !important;
-                max-height: 38px !important;
-                padding: 0 16px !important;
-                width: fit-content !important;
-                min-width: unset !important;
-            }
-            </style>
-            """, unsafe_allow_html=True)
-            if st.button("✖ Cancel", key="cancel_import_empty"):
-                st.session_state.show_csv_uploader = False
-                st.rerun()
     st.markdown("<br>", unsafe_allow_html=True)
-    col1,col2,col3=st.columns(3,gap="large")
+    col1,col2,col3,col4=st.columns(4,gap="large")
     with col1:
         if st.button("📊\nDashboard",key="go_dashboard",use_container_width=True): go("Home")
     with col2:
         if st.button("🌐\nIP Availability",key="go_ip",use_container_width=True): go("IP Availability")
     with col3:
         if st.button("🖥️\nHost Grid",key="go_host",use_container_width=True): go("Host Grid")
+    with col4:
+        if st.button("📋\nAudit Log",key="go_audit",use_container_width=True): go("Audit Log")
 
     st.markdown("""<div style="position:fixed;bottom:20px;left:0;right:0;text-align:center;color:rgba(255,255,255,0.85);font-size:20px;font-weight:700;letter-spacing:1px;">© 2026 Infraon IT</div>""", unsafe_allow_html=True)
 
 # =====================================================
-# HOME PAGE  
+# HOME PAGE
 # =====================================================
 elif st.session_state.page=="Home":
-    # Page header
+
     colb1,colb2=st.columns([1,9])
     with colb1:
         if st.button("⬅ Home",key="back_home_dashboard"):
@@ -592,10 +772,13 @@ elif st.session_state.page=="Home":
     st.markdown("""
     <div class="page-header">
         <h1>📊 Infrastructure Dashboard</h1>
-        <p>Configurable view — choose what you want to see</p>
+        <p>Monitor and manage your infrastructure in real-time</p>
     </div>
     """, unsafe_allow_html=True)
 
+    import plotly.express as px
+
+    # ================= DATA =================
     ip_df=pd.read_sql("""
         SELECT ip_pool.ip_address,
                CASE WHEN vm_requests.ip_address IS NULL THEN 'free' ELSE 'assigned' END AS ip_status,
@@ -606,97 +789,282 @@ elif st.session_state.page=="Home":
         LEFT JOIN vm_requests ON ip_pool.ip_address=vm_requests.ip_address
         LEFT JOIN servers ON vm_requests.server_id=servers.server_id
         ORDER BY ip_pool.ip_address""",conn)
+
     servers_df=pd.read_sql("SELECT * FROM servers",conn)
     vm_df=pd.read_sql("SELECT * FROM vm_requests",conn)
-    total_ips=len(ip_df); free_ips=len(ip_df[ip_df["ip_status"]=="free"]); used_ips=total_ips-free_ips
-    total_hosts=len(servers_df); total_vms=len(vm_df)
 
-    with st.expander("⚙️ Configure Dashboard",expanded=st.session_state.get("dash_config_open",True)):
-        st.session_state["dash_config_open"]=True
-        cfg_col1,cfg_col2,cfg_col3=st.columns(3)
-        with cfg_col1:
-            show_summary  =st.checkbox("📊 Summary Metrics", value=st.session_state.get("cfg_summary",True),   key="cfg_summary")
-            show_ip_status=st.checkbox("🥧 IP Status Chart",  value=st.session_state.get("cfg_ip_status",True), key="cfg_ip_status")
-            show_subnet   =st.checkbox("🌐 Subnet Breakdown", value=st.session_state.get("cfg_subnet",True),    key="cfg_subnet")
-        with cfg_col2:
-            show_team    =st.checkbox("👥 VMs by Team",    value=st.session_state.get("cfg_team",True),     key="cfg_team")
-            show_purpose =st.checkbox("🎯 VMs by Purpose", value=st.session_state.get("cfg_purpose",True),  key="cfg_purpose")
-            show_host_cap=st.checkbox("🖥️ Host Capacity",  value=st.session_state.get("cfg_host_cap",True), key="cfg_host_cap")
-        with cfg_col3:
-            show_ip_table  =st.checkbox("📋 IP Records Table",   value=st.session_state.get("cfg_ip_table",True),   key="cfg_ip_table")
-            show_vm_table  =st.checkbox("🗃️ VM Records Table",   value=st.session_state.get("cfg_vm_table",False),  key="cfg_vm_table")
-            show_host_table=st.checkbox("🖥️ Host Records Table", value=st.session_state.get("cfg_host_table",False),key="cfg_host_table")
-        all_ip_cols=["ip_address","host_ip","vm_name","team_name","cpu_required","ram_required","storage_required","purpose","server_name","ip_status"]
-        col_labels={"ip_address":"IP Address","host_ip":"Host IP","vm_name":"Owner","team_name":"Team","cpu_required":"CPU","ram_required":"RAM","storage_required":"Disk","purpose":"Purpose","server_name":"Server","ip_status":"Status"}
-        selected_ip_cols=st.multiselect("IP Table Columns",options=all_ip_cols,default=st.session_state.get("cfg_ip_cols",all_ip_cols),format_func=lambda x:col_labels[x],key="cfg_ip_cols")
+    total_ips=len(ip_df)
+    free_ips=len(ip_df[ip_df["ip_status"]=="free"])
+    used_ips=total_ips-free_ips
+    total_hosts=len(servers_df)
+    total_vms=len(vm_df)
 
-    st.markdown("<br>",unsafe_allow_html=True)
+    # ================= CONFIG =================
+    with st.expander("⚙️ Configure Dashboard", expanded=True):
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            show_summary      = st.checkbox("📊 Summary Metrics",    value=True)
+            show_ip_status    = st.checkbox("🥧 IP Status Chart",    value=True)
+            show_team         = st.checkbox("👥 VMs by Team",        value=True)
+        with col_b:
+            show_subnet       = st.checkbox("🔀 Subnet Breakdown",   value=True)
+            show_host_cap     = st.checkbox("🖥️ Host Capacity",      value=True)
+        with col_c:
+            show_ip_table     = st.checkbox("📋 IP Records Table",   value=True)
+            show_vm_table     = st.checkbox("⚙️ VM Records Table",   value=True)
+            show_host_table   = st.checkbox("🗄️ Host Records Table", value=True)
 
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ================= SUMMARY CARDS =================
     if show_summary:
-        m1,m2,m3,m4,m5=st.columns(5)
-        m1.metric("🌐 Total IPs",total_ips); m2.metric("✅ Free IPs",free_ips); m3.metric("🔴 Assigned IPs",used_ips)
-        m4.metric("🖥️ Total Hosts",total_hosts); m5.metric("⚙️ Total VMs",total_vms)
-        st.markdown("<br>",unsafe_allow_html=True)
+        st.markdown("### 📊 Overview")
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("🌐 Total IPs", total_ips)
+        m2.metric("✅ Free IPs", free_ips)
+        m3.metric("🔴 Assigned IPs", used_ips)
+        m4.metric("🖥️ Hosts", total_hosts)
+        m5.metric("⚙️ VMs", total_vms)
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
-    chart_items=[show_ip_status,show_team,show_purpose]
+    # ================= EMPTY STATE =================
+    if vm_df.empty and ip_df.empty:
+        st.markdown("""
+        <div style="text-align:center;padding:50px;">
+            <h3 style="color:#1a2f6e;">📭 No Data Available</h3>
+            <p style="color:#6b7280;">Import CSV or create VM</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ================= IP STATUS + VMs BY TEAM CHARTS =================
+    chart_items = [show_ip_status, show_team]
     if any(chart_items):
-        import plotly.express as px
-        chart_cols=st.columns(sum(1 for x in chart_items if x)); ci=0
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        chart_cols = st.columns(sum(1 for x in chart_items if x)); ci = 0
+
         if show_ip_status:
-            pie_df=pd.DataFrame({"Status":["Free","Assigned"],"Count":[free_ips,used_ips]})
-            fig=px.pie(pie_df,names="Status",values="Count",color="Status",color_discrete_map={"Free":"#2952d9","Assigned":"#b3c2e8"},title="IP Pool Status")
-            fig.update_layout(paper_bgcolor="white",plot_bgcolor="white",title_font_color="#1a2f6e",margin=dict(t=40,b=10,l=10,r=10))
-            chart_cols[ci].plotly_chart(fig,use_container_width=True); ci+=1
+            pie_df = pd.DataFrame({"Status": ["Free","Assigned"], "Count": [free_ips, used_ips]})
+            fig = px.pie(pie_df, names="Status", values="Count",
+                         color="Status",
+                         color_discrete_map={"Free":"#2952d9","Assigned":"#b3c2e8"},
+                         title="IP Pool Status")
+            fig.update_layout(paper_bgcolor="white", plot_bgcolor="white",
+                               title_font_color="#1a2f6e", margin=dict(t=40,b=10,l=10,r=10),
+                               font=dict(family="Inter", size=12))
+            chart_cols[ci].plotly_chart(fig, use_container_width=True, key="chart_ip_status")
+            ci += 1
+
         if show_team and not vm_df.empty:
-            team_counts=vm_df["team_name"].value_counts().reset_index(); team_counts.columns=["Team","VMs"]
-            fig2=px.bar(team_counts,x="Team",y="VMs",color_discrete_sequence=["#2952d9"],title="VMs per Team")
-            fig2.update_layout(paper_bgcolor="white",plot_bgcolor="white",title_font_color="#1a2f6e",margin=dict(t=40,b=10,l=10,r=10))
-            chart_cols[ci].plotly_chart(fig2,use_container_width=True); ci+=1
-        if show_purpose and not vm_df.empty:
-            purpose_counts=vm_df["purpose"].value_counts().reset_index(); purpose_counts.columns=["Purpose","Count"]
-            fig3=px.pie(purpose_counts,names="Purpose",values="Count",color_discrete_sequence=["#2952d9","#4f6ee8","#818cf8","#c7d2fe"],title="VMs by Purpose")
-            fig3.update_layout(paper_bgcolor="white",plot_bgcolor="white",title_font_color="#1a2f6e",margin=dict(t=40,b=10,r=10,l=10))
-            chart_cols[ci].plotly_chart(fig3,use_container_width=True)
-        st.markdown("<br>",unsafe_allow_html=True)
+            team_counts = vm_df["team_name"].value_counts().reset_index()
+            team_counts.columns = ["Team","VMs"]
+            fig2 = px.bar(team_counts, x="Team", y="VMs",
+                          color_discrete_sequence=["#2952d9"], title="VMs per Team")
+            fig2.update_layout(paper_bgcolor="white", plot_bgcolor="white",
+                                title_font_color="#1a2f6e", margin=dict(t=40,b=10,l=10,r=10),
+                                font=dict(family="Inter", size=12))
+            chart_cols[ci].plotly_chart(fig2, use_container_width=True, key="chart_vms_team")
 
-    if show_subnet:
-        st.markdown('<div class="section-title">🌐 Subnet Breakdown</div>',unsafe_allow_html=True)
-        ip_df["Subnet"]=ip_df["ip_address"].apply(lambda x:".".join(str(x).split(".")[:3])+".0/24")
-        subnet_stats=ip_df.groupby("Subnet").agg(**{"Total IPs":("ip_address","count"),"Used IPs":("ip_status",lambda x:(x=="assigned").sum()),"Free IPs":("ip_status",lambda x:(x=="free").sum())}).reset_index()
-        sc1,sc2=st.columns([9,1])
-        with sc2: st.download_button("⬇ CSV",subnet_stats.to_csv(index=False).encode("utf-8"),"subnet_summary.csv","text/csv",use_container_width=True)
-        st.dataframe(subnet_stats,use_container_width=True); st.markdown("<br>",unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
-    if show_host_cap:
-        st.markdown('<div class="section-title">🖥️ Host Capacity Overview</div>',unsafe_allow_html=True)
-        vm_count_df=pd.read_sql("SELECT server_id,COUNT(*) as running_vms FROM vm_requests WHERE server_id IS NOT NULL GROUP BY server_id",conn)
-        servers_df["server_id"]=pd.to_numeric(servers_df["server_id"],errors="coerce").astype("Int64")
-        vm_count_df["server_id"]=pd.to_numeric(vm_count_df["server_id"],errors="coerce").astype("Int64")
-        cap_df=servers_df.merge(vm_count_df,on="server_id",how="left"); cap_df["running_vms"]=cap_df["running_vms"].fillna(0).astype(int)
-        hc1,hc2=st.columns([9,1])
-        with hc2: st.download_button("⬇ CSV",cap_df.to_csv(index=False).encode("utf-8"),"host_capacity.csv","text/csv",use_container_width=True)
-        st.dataframe(cap_df[["host_ip","server_name","server_type","total_cpu","total_ram","total_storage","status","running_vms"]],use_container_width=True)
-        st.markdown("<br>",unsafe_allow_html=True)
+    # ================= SUBNET BREAKDOWN =================
+    if show_subnet and not ip_df.empty:
+        st.markdown("### 🔀 Subnet Breakdown")
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
 
-    if show_ip_table:
-        st.markdown('<div class="section-title">📋 IP Records</div>',unsafe_allow_html=True)
-        display_cols=selected_ip_cols if selected_ip_cols else all_ip_cols
-        ip_table=ip_df[display_cols].rename(columns=col_labels).fillna("—")
-        it1,it2=st.columns([9,1])
-        with it2: st.download_button("⬇ CSV",ip_table.to_csv(index=False).encode("utf-8"),"ip_records.csv","text/csv",use_container_width=True)
-        st.dataframe(ip_table,use_container_width=True); st.markdown("<br>",unsafe_allow_html=True)
+        def get_subnet(ip):
+            try:
+                parts = ip.split(".")
+                return f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
+            except:
+                return "Unknown"
 
-    if show_vm_table:
-        st.markdown('<div class="section-title">🗃️ VM Records</div>',unsafe_allow_html=True)
-        vt1,vt2=st.columns([9,1])
-        with vt2: st.download_button("⬇ CSV",vm_df.to_csv(index=False).encode("utf-8"),"vm_records.csv","text/csv",use_container_width=True)
-        st.dataframe(vm_df,use_container_width=True); st.markdown("<br>",unsafe_allow_html=True)
+        ip_df["subnet"] = ip_df["ip_address"].apply(get_subnet)
+        subnet_stats = ip_df.groupby("subnet").agg(
+            Total=("ip_address","count"),
+            Assigned=("ip_status", lambda x: (x=="assigned").sum()),
+            Free=("ip_status", lambda x: (x=="free").sum())
+        ).reset_index()
+        subnet_stats["Utilization %"] = (subnet_stats["Assigned"] / subnet_stats["Total"] * 100).round(1)
+        subnet_stats = subnet_stats.rename(columns={"subnet":"Subnet"})
 
-    if show_host_table:
-        st.markdown('<div class="section-title">🖥️ Host Records</div>',unsafe_allow_html=True)
-        ht1,ht2=st.columns([9,1])
-        with ht2: st.download_button("⬇ CSV",servers_df.to_csv(index=False).encode("utf-8"),"host_records.csv","text/csv",use_container_width=True)
-        st.dataframe(servers_df,use_container_width=True)
+        fig_sub = px.bar(
+            subnet_stats.melt(id_vars="Subnet", value_vars=["Assigned","Free"],
+                              var_name="Status", value_name="Count"),
+            x="Subnet", y="Count", color="Status",
+            color_discrete_map={"Assigned":"#2952d9","Free":"#b3c2e8"},
+            barmode="stack", title="IP Distribution by Subnet"
+        )
+        fig_sub.update_layout(paper_bgcolor="white", plot_bgcolor="white",
+                               title_font_color="#1a2f6e", margin=dict(t=40,b=10,l=10,r=10),
+                               font=dict(family="Inter", size=12))
+        st.plotly_chart(fig_sub, use_container_width=True, key="chart_subnet")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        sh1,sh2,sh3,sh4,sh5 = st.columns([3,1.5,1.5,1.5,2])
+        for col,lbl in zip([sh1,sh2,sh3,sh4,sh5],["**Subnet**","**Total IPs**","**Assigned**","**Free**","**Utilization %**"]):
+            col.markdown(lbl)
+        st.markdown("---")
+        for _,row in subnet_stats.iterrows():
+            c1,c2,c3,c4,c5 = st.columns([3,1.5,1.5,1.5,2])
+            util_color = "#e11d48" if row["Utilization %"]>85 else "#f59e0b" if row["Utilization %"]>60 else "#166534"
+            c1.write(row["Subnet"]); c2.write(int(row["Total"])); c3.write(int(row["Assigned"])); c4.write(int(row["Free"]))
+            c5.markdown(f'<span style="color:{util_color};font-weight:700;">{row["Utilization %"]}%</span>', unsafe_allow_html=True)
+
+        # ── DOWNLOAD: Subnet Breakdown ──
+        st.markdown("<br>", unsafe_allow_html=True)
+        subnet_csv = subnet_stats.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Download Subnet Breakdown CSV",
+            subnet_csv,
+            file_name="subnet_breakdown.csv",
+            mime="text/csv",
+            key="dl_subnet"
+        )
+
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+    # ================= HOST CAPACITY =================
+    if show_host_cap and not servers_df.empty:
+        st.markdown("### 🖥️ Host Capacity")
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+
+        vm_usage = pd.read_sql("""
+            SELECT server_id,
+                   COALESCE(SUM(cpu_required),0) AS used_cpu,
+                   COALESCE(SUM(ram_required),0) AS used_ram,
+                   COALESCE(SUM(storage_required),0) AS used_disk
+            FROM vm_requests WHERE server_id IS NOT NULL GROUP BY server_id
+        """, conn)
+        vm_usage["server_id"] = pd.to_numeric(vm_usage["server_id"], errors="coerce").astype("Int64")
+        servers_cap = servers_df.copy()
+        servers_cap["server_id"] = pd.to_numeric(servers_cap["server_id"], errors="coerce").astype("Int64")
+        cap_df = servers_cap.merge(vm_usage, on="server_id", how="left")
+        cap_df["used_cpu"]  = cap_df["used_cpu"].fillna(0).astype(int)
+        cap_df["used_ram"]  = cap_df["used_ram"].fillna(0).astype(int)
+        cap_df["used_disk"] = cap_df["used_disk"].fillna(0).astype(int)
+        cap_df["cpu_pct"]  = (cap_df["used_cpu"]  / cap_df["total_cpu"].replace(0,1)  * 100).round(1)
+        cap_df["ram_pct"]  = (cap_df["used_ram"]  / cap_df["total_ram"].replace(0,1)  * 100).round(1)
+        cap_df["disk_pct"] = (cap_df["used_disk"] / cap_df["total_storage"].replace(0,1) * 100).round(1)
+
+        def bar_html(pct):
+            pct_clamped = min(int(pct), 100)
+            color = "#e11d48" if pct > 85 else "#f59e0b" if pct > 60 else "#2952d9"
+            label = "⚠️ Over!" if pct > 100 else f"{pct}%"
+            return f"""<div style="display:flex;align-items:center;gap:8px;">
+<div style="flex:1;background:#dce8ff;border-radius:4px;height:10px;">
+  <div style="width:{pct_clamped}%;background:{color};height:10px;border-radius:4px;"></div>
+</div>
+<span style="font-size:12px;font-weight:700;color:{color};min-width:48px;">{label}</span></div>"""
+
+        hc1,hc2,hc3,hc4,hc5 = st.columns([2,2,3,3,3])
+        for col,lbl in zip([hc1,hc2,hc3,hc4,hc5],["**Host**","**IP**","**CPU Usage**","**RAM Usage**","**Disk Usage**"]):
+            col.markdown(lbl)
+        st.markdown("---")
+        for _,row in cap_df.iterrows():
+            c1,c2,c3,c4,c5 = st.columns([2,2,3,3,3])
+            c1.write(row["server_name"]); c2.write(row["host_ip"])
+            c3.markdown(bar_html(row["cpu_pct"]),  unsafe_allow_html=True)
+            c4.markdown(bar_html(row["ram_pct"]),  unsafe_allow_html=True)
+            c5.markdown(bar_html(row["disk_pct"]), unsafe_allow_html=True)
+
+        # ── DOWNLOAD: Host Capacity ──
+        st.markdown("<br>", unsafe_allow_html=True)
+        host_cap_export = cap_df[["server_name","host_ip","total_cpu","total_ram","total_storage",
+                                   "used_cpu","used_ram","used_disk","cpu_pct","ram_pct","disk_pct"]].copy()
+        host_cap_export.columns = ["Host Name","Host IP","Total CPU","Total RAM (GB)","Total Storage (GB)",
+                                    "Used CPU","Used RAM (GB)","Used Disk (GB)","CPU %","RAM %","Disk %"]
+        host_cap_csv = host_cap_export.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Download Host Capacity CSV",
+            host_cap_csv,
+            file_name="host_capacity.csv",
+            mime="text/csv",
+            key="dl_host_cap"
+        )
+
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+    # ================= IP RECORDS TABLE =================
+    if show_ip_table and not ip_df.empty:
+        st.markdown("### 📋 IP Records")
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+
+        ip_tbl = ip_df[["ip_address","ip_status","vm_name","team_name","server_name","host_ip","cpu_required","ram_required","storage_required","purpose"]].copy()
+        ip_tbl = ip_tbl.fillna("—").replace("None","—")
+        ip_tbl.columns = ["IP Address","Status","Owner","Team","Server","Host IP","CPU","RAM (GB)","Disk (GB)","Purpose"]
+        st.dataframe(ip_tbl, use_container_width=True, hide_index=True,
+                     column_config={"Status": st.column_config.TextColumn("Status")})
+
+        # ── DOWNLOAD: IP Records ──
+        ip_csv = ip_tbl.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Download IP Records CSV",
+            ip_csv,
+            file_name="ip_records.csv",
+            mime="text/csv",
+            key="dl_ip"
+        )
+
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+    # ================= VM RECORDS TABLE =================
+    if show_vm_table and not vm_df.empty:
+        st.markdown("### ⚙️ VM Records")
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+
+        vm_tbl = pd.read_sql("""
+            SELECT vm_requests.vm_name, vm_requests.team_name, vm_requests.ip_address,
+                   servers.server_name, servers.host_ip,
+                   vm_requests.cpu_required, vm_requests.ram_required, vm_requests.storage_required,
+                   vm_requests.purpose, vm_requests.approval_status
+            FROM vm_requests
+            LEFT JOIN servers ON vm_requests.server_id = servers.server_id
+            ORDER BY vm_requests.vm_name
+        """, conn)
+        vm_tbl = vm_tbl.fillna("—").replace("None","—")
+        vm_tbl.columns = ["VM Name","Team","IP Address","Server","Host IP","CPU","RAM (GB)","Disk (GB)","Purpose","Status"]
+        st.dataframe(vm_tbl, use_container_width=True, hide_index=True)
+
+        # ── DOWNLOAD: VM Records ──
+        vm_csv = vm_tbl.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Download VM Records CSV",
+            vm_csv,
+            file_name="vm_records.csv",
+            mime="text/csv",
+            key="dl_vm"
+        )
+
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+    # ================= HOST RECORDS TABLE =================
+    if show_host_table and not servers_df.empty:
+        st.markdown("### 🗄️ Host Records")
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+
+        host_tbl = servers_df[["server_name","host_ip","server_type","total_cpu","total_ram","total_storage","status"]].copy()
+        host_tbl.columns = ["Host Name","Host IP","Type","Total CPU","Total RAM (GB)","Total Storage (GB)","Status"]
+        st.dataframe(host_tbl, use_container_width=True, hide_index=True)
+
+        # ── DOWNLOAD: Host Records ──
+        host_rec_csv = host_tbl.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Download Host Records CSV",
+            host_rec_csv,
+            file_name="host_records.csv",
+            mime="text/csv",
+            key="dl_host"
+        )
+
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
 # =====================================================
 # IP AVAILABILITY PAGE
@@ -732,17 +1100,6 @@ elif st.session_state.page=="IP Availability":
     ip_display["Host IP"]=ip_display["Host IP"].replace("None","—")
     ip_display["Server"]=ip_display["Server"].replace("None","—")
 
-    total_ips=len(ip_display); free_ips=len(ip_display[ip_display["Status"]=="free"]); used_ips=total_ips-free_ips
-
-    m1,m2,m3=st.columns(3)
-    m1.metric("🌐 Total IPs",total_ips); m2.metric("✅ Free IPs",free_ips); m3.metric("🔴 Assigned IPs",used_ips)
-    st.markdown("<br>",unsafe_allow_html=True)
-
-    st.markdown('<div class="section-title">🗺️ Subnet Summary</div>',unsafe_allow_html=True)
-    ip_display["Subnet"]=ip_display["IP Address"].apply(lambda x:".".join(str(x).split(".")[:3])+".0/24")
-    subnet_stats=ip_display.groupby("Subnet").agg(**{"Total IPs":("IP Address","count"),"Used IPs":("Status",lambda x:(x=="assigned").sum()),"Free IPs":("Status",lambda x:(x=="free").sum())}).reset_index()
-    st.dataframe(subnet_stats,use_container_width=True)
-
     @st.dialog("Confirm IP Release")
     def confirm_delete_dialog(ip_address):
         st.markdown(f"### ⚠️ Release IP: `{ip_address}`")
@@ -753,7 +1110,9 @@ elif st.session_state.page=="IP Availability":
                 cur=conn.cursor()
                 cur.execute("DELETE FROM vm_requests WHERE ip_address=?",(ip_address,))
                 cur.execute("UPDATE ip_pool SET ip_status='free' WHERE ip_address=?",(ip_address,))
-                conn.commit(); st.session_state.ip_deleted=True; st.rerun()
+                conn.commit()
+                log_action("RELEASE_IP", "IP", resource_id=ip_address, details=f"IP released back to pool")
+                st.session_state.ip_deleted=True; st.rerun()
         with col2:
             if st.button("Cancel",use_container_width=True): st.rerun()
 
@@ -763,43 +1122,57 @@ elif st.session_state.page=="IP Availability":
     start=(st.session_state.ip_page-1)*rows_per_page
     page_df=ip_display.iloc[start:start+rows_per_page]
 
-    st.markdown("<br>",unsafe_allow_html=True)
-    st.markdown('<div class="section-title">📋 IP Records</div>',unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    # Header row
-    h1,h2,h3,h4,h5,h6,h7,h8,h9,h10,h11=st.columns([1.3,1.3,1.4,1.4,1,1,1.2,1.3,1.2,1,1.4])
-    for col,label in zip([h1,h2,h3,h4,h5,h6,h7,h8,h9,h10,h11],["**IP Address**","**Host IP**","**Owner**","**Team**","**CPU**","**RAM**","**Disk**","**Purpose**","**Server**","**Status**","**Actions**"]):
-        col.markdown(label)
-    st.markdown("---")
+    toggle_label = "🔼 Hide IP Records" if st.session_state.get("show_ip_records", False) else "📋 Show IP Records"
+    btn_col1, btn_col2, _ = st.columns([2, 2, 8])
+    with btn_col1:
+        if st.button(toggle_label, key="toggle_ip_records", use_container_width=True):
+            st.session_state["show_ip_records"] = not st.session_state.get("show_ip_records", False)
+            st.rerun()
+    with btn_col2:
+        if st.button("➕ New VM Request", key="ip_page_new_vm", use_container_width=True):
+            st.session_state.open_vm_drawer = True
+            st.session_state.open_host_drawer = False
+            st.rerun()
 
-    for i,row in page_df.iterrows():
-        c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11=st.columns([1.3,1.3,1.4,1.4,1,1,1.2,1.3,1.2,1,1.4])
-        # Color status
-        status_badge = f'<span style="background:#dcfce7;color:#166534;border-radius:6px;padding:2px 8px;font-size:12px;font-weight:600;">free</span>' if row["Status"]=="free" else f'<span style="background:#dbeafe;color:#1d4ed8;border-radius:6px;padding:2px 8px;font-size:12px;font-weight:600;">assigned</span>'
-        c1.write(row["IP Address"]); c2.write(row["Host IP"]); c3.write(row["Owner"]); c4.write(row["Team"])
-        c5.write(row["CPU"]); c6.write(row["RAM"]); c7.write(row["Disk"]); c8.write(row["Purpose"])
-        c9.write(row["Server"]); c10.markdown(status_badge,unsafe_allow_html=True)
-        with c11:
-            a1,a2=st.columns([1,1],gap="small")
-            with a1:
-                if st.button("✏️",key=f"edit_{i}"):
-                    st.session_state.edit_ip=row["IP Address"]
-                    st.session_state.open_host_drawer=False; st.session_state.open_vm_drawer=False; st.rerun()
-            with a2:
-                if st.button("🗑️",key=f"delete_{i}"): confirm_delete_dialog(row["IP Address"])
+    render_vm_drawer()
 
-    st.markdown("<br>",unsafe_allow_html=True)
-    if "ip_deleted" in st.session_state: del st.session_state["ip_deleted"]; st.rerun()
+    if st.session_state.get("show_ip_records", False):
+        st.markdown('<div class="section-title">📋 IP Records</div>', unsafe_allow_html=True)
 
-    left,mid,right=st.columns([2,11,1])
-    with left:
-        if st.button("⬅ Prev",disabled=st.session_state.ip_page==1):
-            st.session_state.ip_page-=1; st.rerun()
-    with mid:
-        st.markdown(f"<div style='text-align:center;font-weight:600;color:#1a2f6e;'>Page {st.session_state.ip_page} of {total_pages}</div>",unsafe_allow_html=True)
-    with right:
-        if st.button("Next ➡",disabled=st.session_state.ip_page>=total_pages):
-            st.session_state.ip_page+=1; st.rerun()
+        h1,h2,h3,h4,h5,h6,h7,h8,h9,h10,h11=st.columns([1.3,1.3,1.4,1.4,1,1,1.2,1.3,1.2,1,1.4])
+        for col,label in zip([h1,h2,h3,h4,h5,h6,h7,h8,h9,h10,h11],["**IP Address**","**Host IP**","**Owner**","**Team**","**CPU**","**RAM**","**Disk**","**Purpose**","**Server**","**Status**","**Actions**"]):
+            col.markdown(label)
+        st.markdown("---")
+
+        for i,row in page_df.iterrows():
+            c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11=st.columns([1.3,1.3,1.4,1.4,1,1,1.2,1.3,1.2,1,1.4])
+            status_badge = f'<span style="background:#dcfce7;color:#166534;border-radius:6px;padding:2px 8px;font-size:12px;font-weight:600;">free</span>' if row["Status"]=="free" else f'<span style="background:#dbeafe;color:#1d4ed8;border-radius:6px;padding:2px 8px;font-size:12px;font-weight:600;">assigned</span>'
+            c1.write(row["IP Address"]); c2.write(row["Host IP"]); c3.write(row["Owner"]); c4.write(row["Team"])
+            c5.write(row["CPU"]); c6.write(row["RAM"]); c7.write(row["Disk"]); c8.write(row["Purpose"])
+            c9.write(row["Server"]); c10.markdown(status_badge,unsafe_allow_html=True)
+            with c11:
+                a1,a2=st.columns([1,1],gap="small")
+                with a1:
+                    if st.button("✏️",key=f"edit_{i}"):
+                        st.session_state.edit_ip=row["IP Address"]
+                        st.session_state.open_host_drawer=False; st.session_state.open_vm_drawer=False; st.rerun()
+                with a2:
+                    if st.button("🗑️",key=f"delete_{i}"): confirm_delete_dialog(row["IP Address"])
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        if "ip_deleted" in st.session_state: del st.session_state["ip_deleted"]; st.rerun()
+
+        left,mid,right=st.columns([2,11,1])
+        with left:
+            if st.button("⬅ Prev",disabled=st.session_state.ip_page==1):
+                st.session_state.ip_page-=1; st.rerun()
+        with mid:
+            st.markdown(f"<div style='text-align:center;font-weight:600;color:#1a2f6e;'>Page {st.session_state.ip_page} of {total_pages}</div>",unsafe_allow_html=True)
+        with right:
+            if st.button("Next ➡",disabled=st.session_state.ip_page>=total_pages):
+                st.session_state.ip_page+=1; st.rerun()
 
 # =====================================================
 # HOST GRID PAGE
@@ -818,14 +1191,11 @@ elif st.session_state.page=="Host Grid":
     </div>
     """, unsafe_allow_html=True)
 
-    title_col,btn_col1,btn_col2,btn_col3=st.columns([4,2,2,2])        
+    title_col,btn_col1,btn_col2=st.columns([6,2,2])
     with btn_col1:
         if st.button("➕ New Host",use_container_width=True):
             st.session_state.open_host_drawer=True; st.session_state.open_vm_drawer=False; st.rerun()
     with btn_col2:
-        if st.button("➕ New VM Request",use_container_width=True):
-            st.session_state.open_vm_drawer=True; st.session_state.open_host_drawer=False; st.rerun()
-    with btn_col3:
         if st.button("📂 Import Hosts CSV",use_container_width=True):
             st.session_state.show_host_csv=True; st.rerun()
 
@@ -852,7 +1222,7 @@ elif st.session_state.page=="Host Grid":
                             try: cpu=int(float(row["CPU"]))
                             except: cpu=0
                             try: ram=int(float(row["RAM(GB)"]))
-                            except: ram=0 
+                            except: ram=0
                             try: storage=int(float(row["STORAGE(GB)"]))
                             except: storage=0
                             if not validate_ip(host_ip): skipped+=1; continue
@@ -860,6 +1230,7 @@ elif st.session_state.page=="Host Grid":
                             if existing: cur.execute("UPDATE servers SET server_name=?,server_type=?,total_cpu=?,total_ram=?,total_storage=? WHERE host_ip=?",(host_name,srv_type,cpu,ram,storage,host_ip))
                             else: cur.execute("INSERT INTO servers (host_ip,server_name,server_type,total_cpu,total_ram,total_storage,status) VALUES (?,?,?,?,?,?,'active')",(host_ip,host_name,srv_type,cpu,ram,storage)); added+=1
                         conn.commit(); st.session_state.show_host_csv=False
+                        log_action("CSV_IMPORT_HOSTS", "BULK", details=f"File: {host_csv.name} | Added: {added}, Skipped: {skipped}")
                         st.success(f"✅ Import done — {added} hosts added, {skipped} skipped."); st.rerun()
                 with c2:
                     if st.button("✖ Cancel",use_container_width=True,key="cancel_host_import"):
@@ -869,7 +1240,6 @@ elif st.session_state.page=="Host Grid":
                 st.session_state.show_host_csv=False; st.rerun()
         st.markdown("---")
 
-    # NEW HOST SIDEBAR
     if st.session_state.open_host_drawer:
         st.sidebar.markdown("## ➕ New Host"); st.sidebar.markdown("---")
         new_host_ip    =st.sidebar.text_input("Host IP Address",placeholder="e.g. 192.168.1.20")
@@ -886,77 +1256,16 @@ elif st.session_state.page=="Host Grid":
                 if not new_host_name.strip(): st.sidebar.error("Host name is required"); st.stop()
                 cur=conn.cursor()
                 cur.execute("INSERT INTO servers (host_ip,server_name,server_type,total_cpu,total_ram,total_storage,status) VALUES (?,?,?,?,?,?,?)",(new_host_ip.strip(),new_host_name.strip(),new_server_type,new_cpu,new_ram,new_storage,'active'))
-                conn.commit(); st.sidebar.success(f"✅ Host '{new_host_name}' added!"); st.session_state.open_host_drawer=False; st.rerun()
+                conn.commit()
+                log_action("CREATE_HOST", "HOST", resource_id=new_host_ip,
+                           details=f"Name: {new_host_name} | Type: {new_server_type} | CPU: {new_cpu} | RAM: {new_ram}GB | Storage: {new_storage}GB")
+                st.sidebar.success(f"✅ Host '{new_host_name}' added!"); st.session_state.open_host_drawer=False; st.rerun()
         with sb2:
             if st.button("✖ Cancel",use_container_width=True,key="cancel_new_host"):
                 st.session_state.open_host_drawer=False; st.rerun()
 
-    # CREATE VM SIDEBAR
-    if st.session_state.open_vm_drawer:
-        st.sidebar.markdown("### Create VM Request")
-        free_ips_df =pd.read_sql("SELECT ip_address FROM ip_pool WHERE ip_status='free'",conn)
-        servers_list=pd.read_sql("SELECT * FROM servers",conn)
-        ip_choice    =st.sidebar.selectbox("VM IP Address",free_ips_df["ip_address"].tolist())
-        owner_name   =st.sidebar.text_input("Owner Name")
-        team_name    =st.sidebar.text_input("Team Name")
-        server_choice=st.sidebar.selectbox("Server Name",options=servers_list["server_id"],format_func=lambda x:servers_list.loc[servers_list["server_id"]==x,"server_name"].values[0])
-        selected_server=servers_list.loc[servers_list["server_id"]==server_choice].iloc[0]
-        total_cpu=int(selected_server["total_cpu"]); total_ram=int(selected_server["total_ram"]); total_disk=int(selected_server["total_storage"])
-        used_resources=pd.read_sql("SELECT COALESCE(SUM(cpu_required),0) AS used_cpu,COALESCE(SUM(ram_required),0) AS used_ram,COALESCE(SUM(storage_required),0) AS used_disk FROM vm_requests WHERE server_id=?",conn,params=(server_choice,))
-        used_cpu=int(used_resources.iloc[0]["used_cpu"]); used_ram=int(used_resources.iloc[0]["used_ram"]); used_disk=int(used_resources.iloc[0]["used_disk"])
-        available_cpu  = max(total_cpu - used_cpu,  1)
-        available_ram  = max(total_ram - used_ram,  1)
-        available_disk = max(total_disk - used_disk, 10)
-        # vCPU utilization calculation
-        used_pct_cpu  = round((used_cpu  / total_cpu  * 100), 1) if total_cpu  > 0 else 0
-        used_pct_ram  = round((used_ram  / total_ram  * 100), 1) if total_ram  > 0 else 0
-        used_pct_disk = round((used_disk / total_disk * 100), 1) if total_disk > 0 else 0
+    render_vm_drawer()
 
-        cpu_color  = "🔴" if used_pct_cpu  > 85 else "🟡" if used_pct_cpu  > 60 else "🟢"
-        ram_color  = "🔴" if used_pct_ram  > 85 else "🟡" if used_pct_ram  > 60 else "🟢"
-        disk_color = "🔴" if used_pct_disk > 85 else "🟡" if used_pct_disk > 60 else "🟢"        
-
-        bar_cpu  = min(int(used_pct_cpu),  100)
-        bar_ram  = min(int(used_pct_ram),  100)
-        bar_disk = min(int(used_pct_disk), 100)
-        col_cpu  = '#e11d48' if bar_cpu  > 85 else '#f59e0b' if bar_cpu  > 60 else '#2952d9'
-        col_ram  = '#e11d48' if bar_ram  > 85 else '#f59e0b' if bar_ram  > 60 else '#2952d9'
-        col_disk = '#e11d48' if bar_disk > 85 else '#f59e0b' if bar_disk > 60 else '#2952d9'
-
-        st.sidebar.markdown(f"""
-<div style="background:#f0f4ff;border-radius:10px;padding:14px 16px;border:1px solid #dce8ff;margin:8px 0;">
-<p style="font-weight:700;color:#1a2f6e;margin:0 0 10px 0;">📊 Server Resource Usage</p>
-<p style="font-size:13px;color:#1a2f6e;font-weight:600;margin:0 0 4px 0;">🖥️ vCPU &nbsp;&nbsp; {used_cpu} / {total_cpu} cores ({'⚠️ Over!' if used_pct_cpu > 100 else str(used_pct_cpu)+'%'})</p>
-<table width="100%" cellspacing="0" cellpadding="0"><tr>
-<td width="{bar_cpu}%" style="background:{col_cpu};height:8px;border-radius:4px 0 0 4px;"></td>
-<td width="{100-bar_cpu}%" style="background:#dce8ff;height:8px;border-radius:0 4px 4px 0;"></td>
-</tr></table>
-<p style="font-size:13px;color:#1a2f6e;font-weight:600;margin:10px 0 4px 0;">💾 RAM &nbsp;&nbsp; {used_ram} / {total_ram} GB ({'⚠️ Over!' if used_pct_ram > 100 else str(used_pct_ram)+'%'})</p>
-<table width="100%" cellspacing="0" cellpadding="0"><tr>
-<td width="{bar_ram}%" style="background:{col_ram};height:8px;border-radius:4px 0 0 4px;"></td>
-<td width="{100-bar_ram}%" style="background:#dce8ff;height:8px;border-radius:0 4px 4px 0;"></td>
-</tr></table>
-<p style="font-size:13px;color:#1a2f6e;font-weight:600;margin:10px 0 4px 0;">💿 Disk &nbsp;&nbsp; {used_disk} / {total_disk} GB ({'⚠️ Over!' if used_pct_disk > 100 else str(used_pct_disk)+'%'})</p>
-<table width="100%" cellspacing="0" cellpadding="0"><tr>
-<td width="{bar_disk}%" style="background:{col_disk};height:8px;border-radius:4px 0 0 4px;"></td>
-<td width="{100-bar_disk}%" style="background:#dce8ff;height:8px;border-radius:0 4px 4px 0;"></td>
-</tr></table>
-<p style="font-size:12px;color:#2952d9;font-weight:600;margin:10px 0 0 0;">✅ Available — CPU: {available_cpu} | RAM: {available_ram} GB | Disk: {available_disk} GB</p>
-</div>""", unsafe_allow_html=True)
-        purpose=st.sidebar.selectbox("Purpose",["Development","Testing","R&D"])
-        cpu =st.sidebar.number_input("CPU Cores",min_value=1, max_value=available_cpu, value=min(2,available_cpu))
-        ram =st.sidebar.number_input("RAM (GB)", min_value=1, max_value=available_ram, value=min(4,available_ram))
-        disk=st.sidebar.number_input("Disk (GB)",min_value=10,max_value=available_disk,value=min(50,available_disk))
-        st.sidebar.markdown("---")
-        btn_cols=st.sidebar.columns(2)
-        with btn_cols[0]:
-            if st.button("💾 Create",use_container_width=True,key="create_vm_btn"):
-                confirm_vm_dialog(owner_name,team_name,server_choice,ip_choice,cpu,ram,disk,purpose)
-        with btn_cols[1]:
-            if st.button("✖ Cancel",use_container_width=True,key="cancel_vm_btn"):
-                st.session_state.open_vm_drawer=False; st.rerun()
-
-    # SERVER CAPACITY TABLE
     st.markdown("<br>",unsafe_allow_html=True)
     st.markdown('<div class="section-title">📊 Server Capacity Overview</div>',unsafe_allow_html=True)
     vm_count=pd.read_sql("SELECT server_id,COUNT(*) as running_vms FROM vm_requests WHERE server_id IS NOT NULL GROUP BY server_id",conn)
@@ -983,7 +1292,6 @@ elif st.session_state.page=="Host Grid":
             if st.button("✏️",key=f"edit_host_{sid}"):
                 st.session_state.edit_host_id=sid; st.session_state.open_host_drawer=False; st.session_state.open_vm_drawer=False; st.rerun()
 
-    # HOST EDIT SIDEBAR
     if st.session_state.edit_host_id is not None:
         host_row=pd.read_sql("SELECT * FROM servers WHERE server_id=?",conn,params=(st.session_state.edit_host_id,))
         if len(host_row)>0:
@@ -1003,7 +1311,10 @@ elif st.session_state.page=="Host Grid":
                 if st.button("💾 Save",use_container_width=True,key="save_host_edit"):
                     cur=conn.cursor()
                     cur.execute("UPDATE servers SET server_name=?,server_type=?,total_cpu=?,total_ram=?,total_storage=?,status=? WHERE server_id=?",(new_name,new_type,new_cpu,new_ram,new_disk,new_status,st.session_state.edit_host_id))
-                    conn.commit(); st.session_state.edit_host_id=None; st.rerun()
+                    conn.commit()
+                    log_action("EDIT_HOST", "HOST", resource_id=hd["host_ip"],
+                               details=f"Name: {new_name} | Type: {new_type} | CPU: {new_cpu} | RAM: {new_ram}GB | Storage: {new_disk}GB | Status: {new_status}")
+                    st.session_state.edit_host_id=None; st.rerun()
             with sb2:
                 if st.button("✖ Cancel",use_container_width=True,key="cancel_host_edit"):
                     st.session_state.edit_host_id=None; st.rerun()
@@ -1059,10 +1370,6 @@ if "edit_ip" in st.session_state and st.session_state.edit_ip is not None and st
     used_pct_ram  = round((used_ram  / total_ram  * 100), 1) if total_ram  > 0 else 0
     used_pct_disk = round((used_disk / total_disk * 100), 1) if total_disk > 0 else 0
 
-    cpu_color  = "🔴" if used_pct_cpu  > 85 else "🟡" if used_pct_cpu  > 60 else "🟢"
-    ram_color  = "🔴" if used_pct_ram  > 85 else "🟡" if used_pct_ram  > 60 else "🟢"
-    disk_color = "🔴" if used_pct_disk > 85 else "🟡" if used_pct_disk > 60 else "🟢"
-
     bar_cpu  = min(int(used_pct_cpu),  100)
     bar_ram  = min(int(used_pct_ram),  100)
     bar_disk = min(int(used_pct_disk), 100)
@@ -1093,7 +1400,7 @@ if "edit_ip" in st.session_state and st.session_state.edit_ip is not None and st
     owner=st.sidebar.text_input("Owner Name",value=data["vm_name"]   if pd.notna(data["vm_name"])   else "")
     team =st.sidebar.text_input("Team Name", value=data["team_name"] if pd.notna(data["team_name"]) else "")
     if not owner.strip(): st.sidebar.error("Owner name required"); st.stop()
-    if not team.strip():  st.sidebar.error("Team name required");  st.stop()  
+    if not team.strip():  st.sidebar.error("Team name required");  st.stop()
 
     purpose_options=["Development","Testing","R&D"]
     purpose_idx=purpose_options.index(data["purpose"]) if pd.notna(data["purpose"]) and data["purpose"] in purpose_options else 0
@@ -1115,12 +1422,127 @@ if "edit_ip" in st.session_state and st.session_state.edit_ip is not None and st
             existing=cur.execute("SELECT * FROM vm_requests WHERE ip_address=?",(ip_address,)).fetchone()
             if existing:
                 cur.execute("UPDATE vm_requests SET vm_name=?,team_name=?,server_id=?,cpu_required=?,ram_required=?,storage_required=?,purpose=? WHERE ip_address=?",(owner,team,server_choice,cpu,ram,disk,purpose,ip_address))
+                action_label = "EDIT_VM"
             else:
                 cur.execute("INSERT INTO vm_requests (ip_address,vm_name,team_name,server_id,cpu_required,ram_required,storage_required,purpose) VALUES(?,?,?,?,?,?,?,?)",(ip_address,owner,team,server_choice,cpu,ram,disk,purpose))
+                action_label = "CREATE_VM"
             cur.execute("UPDATE ip_pool SET ip_status=? WHERE ip_address=?",(status,ip_address))
-            conn.commit(); st.session_state.edit_ip=None; st.rerun()
+            conn.commit()
+            log_action(action_label, "VM", resource_id=ip_address,
+                       details=f"Owner: {owner} | Team: {team} | CPU: {cpu} | RAM: {ram}GB | Disk: {disk}GB | Status: {status} | Purpose: {purpose}")
+            st.session_state.edit_ip=None; st.rerun()
     with c2:
         if st.button("Cancel",use_container_width=True):
             st.session_state.edit_ip=None
             if "edit_server" in st.session_state: del st.session_state.edit_server
             st.rerun()
+
+# =====================================================
+# AUDIT LOG PAGE
+# =====================================================
+elif st.session_state.page=="Audit Log":
+    colb1,_=st.columns([1,9])
+    with colb1:
+        if st.button("⬅ Home",key="back_home_audit"):
+            st.session_state.page="landing"; st.rerun()
+
+    st.markdown("""
+    <div class="page-header">
+        <h1>📋 Audit Log</h1>
+        <p>Track all infrastructure actions with timestamps and user details</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    audit_df = pd.read_sql(
+        "SELECT timestamp, user, action, resource, resource_id, details, status FROM audit_log ORDER BY id DESC",
+        conn
+    )
+
+    if audit_df.empty:
+        st.markdown("""
+        <div style="text-align:center;padding:60px;">
+            <h3 style="color:#1a2f6e;">📭 No audit records yet</h3>
+            <p style="color:#6b7280;">Actions like creating VMs, editing hosts, and importing CSVs will appear here.</p>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        total_actions  = len(audit_df)
+        unique_users   = audit_df["user"].nunique()
+        action_types   = audit_df["action"].nunique()
+        failed_actions = len(audit_df[audit_df["status"]=="error"])
+
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        m1,m2,m3,m4 = st.columns(4)
+        m1.metric("📋 Total Actions",  total_actions)
+        m2.metric("👤 Unique Users",   unique_users)
+        m3.metric("🔖 Action Types",   action_types)
+        m4.metric("❌ Failed Actions", failed_actions)
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">🔍 Filter Logs</div>', unsafe_allow_html=True)
+        fc1,fc2,fc3,fc4 = st.columns(4)
+        with fc1:
+            all_users = ["All"] + sorted(audit_df["user"].unique().tolist())
+            sel_user = st.selectbox("User", all_users, key="audit_user_filter")
+        with fc2:
+            all_actions = ["All"] + sorted(audit_df["action"].unique().tolist())
+            sel_action = st.selectbox("Action", all_actions, key="audit_action_filter")
+        with fc3:
+            all_resources = ["All"] + sorted(audit_df["resource"].unique().tolist())
+            sel_resource = st.selectbox("Resource", all_resources, key="audit_resource_filter")
+        with fc4:
+            all_statuses = ["All"] + sorted(audit_df["status"].unique().tolist())
+            sel_status = st.selectbox("Status", all_statuses, key="audit_status_filter")
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        filtered = audit_df.copy()
+        if sel_user     != "All": filtered = filtered[filtered["user"]     == sel_user]
+        if sel_action   != "All": filtered = filtered[filtered["action"]   == sel_action]
+        if sel_resource != "All": filtered = filtered[filtered["resource"] == sel_resource]
+        if sel_status   != "All": filtered = filtered[filtered["status"]   == sel_status]
+
+        action_colours = {
+            "CREATE_VM":          ("#dcfce7","#166534"),
+            "EDIT_VM":            ("#dbeafe","#1d4ed8"),
+            "RELEASE_IP":         ("#fef9c3","#854d0e"),
+            "CREATE_HOST":        ("#f3e8ff","#6b21a8"),
+            "EDIT_HOST":          ("#e0f2fe","#0369a1"),
+            "CSV_IMPORT":         ("#fce7f3","#9d174d"),
+            "CSV_IMPORT_HOSTS":   ("#fce7f3","#9d174d"),
+        }
+
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-title">📋 {len(filtered)} Records</div>', unsafe_allow_html=True)
+
+        ah1,ah2,ah3,ah4,ah5,ah6,ah7 = st.columns([2,2,2,1.5,1.5,3.5,1.2])
+        for col,lbl in zip([ah1,ah2,ah3,ah4,ah5,ah6,ah7],
+                           ["**Timestamp**","**User**","**Action**","**Resource**","**Resource ID**","**Details**","**Status**"]):
+            col.markdown(lbl)
+        st.markdown("---")
+
+        for _,row in filtered.iterrows():
+            a_bg, a_fg = action_colours.get(row["action"], ("#f0f4ff","#1a2f6e"))
+            s_bg  = "#dcfce7" if row["status"]=="success" else "#fee2e2"
+            s_fg  = "#166534" if row["status"]=="success" else "#991b1b"
+            s_ico = "✅" if row["status"]=="success" else "❌"
+
+            r1,r2,r3,r4,r5,r6,r7 = st.columns([2,2,2,1.5,1.5,3.5,1.2])
+            r1.markdown(f'<span style="font-size:12px;color:#6b7280;">{row["timestamp"]}</span>', unsafe_allow_html=True)
+            r2.markdown(f'<span style="font-size:13px;font-weight:600;color:#1a2f6e;">👤 {row["user"]}</span>', unsafe_allow_html=True)
+            r3.markdown(f'<span style="background:{a_bg};color:{a_fg};border-radius:6px;padding:2px 8px;font-size:12px;font-weight:700;">{row["action"]}</span>', unsafe_allow_html=True)
+            r4.markdown(f'<span style="font-size:12px;font-weight:600;color:#2952d9;">{row["resource"]}</span>', unsafe_allow_html=True)
+            r5.markdown(f'<span style="font-size:12px;color:#374151;">{row["resource_id"] or "—"}</span>', unsafe_allow_html=True)
+            r6.markdown(f'<span style="font-size:12px;color:#374151;">{row["details"] or "—"}</span>', unsafe_allow_html=True)
+            r7.markdown(f'<span style="background:{s_bg};color:{s_fg};border-radius:6px;padding:2px 8px;font-size:12px;font-weight:600;">{s_ico} {row["status"]}</span>', unsafe_allow_html=True)
+
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        csv_export = filtered.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Export Audit Log as CSV", csv_export,
+            file_name="audit_log_export.csv", mime="text/csv"
+        )
