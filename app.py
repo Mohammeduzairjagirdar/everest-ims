@@ -177,7 +177,8 @@ button[data-testid="baseButton-back_home_dashboard"] {
 /* ── Landing nav buttons ── */
 button[data-testid="baseButton-go_dashboard"],
 button[data-testid="baseButton-go_ip"],
-button[data-testid="baseButton-go_host"] {
+button[data-testid="baseButton-go_host"],
+button[data-testid="baseButton-go_audit"] {
     color:#1a2f6e !important; height:220px !important; width:100% !important;
     border-radius:22px !important; background:#b3c2e8 !important;
     border:none !important;
@@ -188,16 +189,24 @@ button[data-testid="baseButton-go_host"] {
 }
 button[data-testid="baseButton-go_dashboard"]:hover,
 button[data-testid="baseButton-go_ip"]:hover,
-button[data-testid="baseButton-go_host"]:hover { background:#c5d0f0 !important; }
-button[data-testid="baseButton-go_dashboard"] p:first-child,
-button[data-testid="baseButton-go_ip"] p:first-child,
-button[data-testid="baseButton-go_host"] p:first-child { font-size:70px !important; }
-button[data-testid="baseButton-go_dashboard"] p:last-child,
-button[data-testid="baseButton-go_ip"] p:last-child,
-button[data-testid="baseButton-go_host"] p:last-child { font-size:24px !important; font-weight:600 !important; }
+button[data-testid="baseButton-go_host"]:hover,
+button[data-testid="baseButton-go_audit"]:hover { background:#c5d0f0 !important; }
+
 button[data-testid="baseButton-go_dashboard"] p,
 button[data-testid="baseButton-go_ip"] p,
-button[data-testid="baseButton-go_host"] p { color:#1a2f6e !important; font-weight:700 !important; }
+button[data-testid="baseButton-go_host"] p,
+button[data-testid="baseButton-go_audit"] p {
+    color:#1a2f6e !important; font-weight:700 !important;
+    margin:0 !important; line-height:1.2 !important;
+}
+button[data-testid="baseButton-go_dashboard"] p:first-child,
+button[data-testid="baseButton-go_ip"] p:first-child,
+button[data-testid="baseButton-go_host"] p:first-child,
+button[data-testid="baseButton-go_audit"] p:first-child { font-size:60px !important; }
+button[data-testid="baseButton-go_dashboard"] p:last-child,
+button[data-testid="baseButton-go_ip"] p:last-child,
+button[data-testid="baseButton-go_host"] p:last-child,
+button[data-testid="baseButton-go_audit"] p:last-child { font-size:20px !important; font-weight:700 !important; }
 
 /* ── Landing page ── */
 .landing-title { text-align:center !important; font-size:48px !important; font-weight:700 !important; color:white !important; -webkit-text-fill-color:white !important; margin-bottom:8px; }
@@ -738,7 +747,7 @@ if st.session_state.page=="landing":
     st.markdown("""
         <div style="position:fixed;top:12px;right:16px;z-index:99999;">
             <a href="?logout=true" target="_self">
-                <button style="background:#b3c2e8;color:#1a2f6e;border:none;border-radius:12px;font-weight:700;padding:8px 20px;cursor:pointer;font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,0.08);">🔓 Logout</button>
+                <button style="background:rgba(163,185,231,0.55);color:#1a2f6e;border:1.5px solid rgba(255,255,255,0.25);border-radius:12px;font-weight:700;padding:8px 20px;cursor:pointer;font-size:14px;box-shadow:0 6px 24px rgba(30,60,150,0.15);backdrop-filter:blur(10px);">🔓 Logout</button>
             </a>
         </div>
     """, unsafe_allow_html=True)
@@ -758,7 +767,6 @@ if st.session_state.page=="landing":
         box-shadow:0 6px 24px rgba(30,60,150,0.15) !important;
         font-weight:700 !important;
         height:130px !important;
-        font-size:16px !important;
         backdrop-filter:blur(10px) !important;
         transition:0.2s ease !important;
     }
@@ -767,7 +775,15 @@ if st.session_state.page=="landing":
         box-shadow:0 8px 28px rgba(30,60,150,0.22) !important;
         transform:translateY(-3px) !important;
     }
-    button p { color:#1a2f6e !important; font-weight:700 !important; font-size:18px !important; }
+    button[data-testid="baseButton-go_dashboard"] p:first-child,
+    button[data-testid="baseButton-go_ip"] p:first-child,
+    button[data-testid="baseButton-go_host"] p:first-child,
+    button[data-testid="baseButton-go_audit"] p:first-child { font-size:60px !important; line-height:1.2 !important; }
+    button[data-testid="baseButton-go_dashboard"] p:last-child,
+    button[data-testid="baseButton-go_ip"] p:last-child,
+    button[data-testid="baseButton-go_host"] p:last-child,
+    button[data-testid="baseButton-go_audit"] p:last-child { font-size:20px !important; font-weight:700 !important; }
+    button p { color:#1a2f6e !important; font-weight:700 !important; }
     </style>""", unsafe_allow_html=True)
 
     st.markdown('<div class="landing-title"> IP Management Portal</div>', unsafe_allow_html=True)
@@ -784,7 +800,7 @@ if st.session_state.page=="landing":
     with col1:
         if st.button("📊\nDashboard",key="go_dashboard",use_container_width=True): go("Home")
     with col2:
-        if st.button("🌐\nIP Availability",key="go_ip",use_container_width=True): go("IP Availability")
+        if st.button("🖧\nIP Availability",key="go_ip",use_container_width=True): go("IP Availability")
     with col3:
         if st.button("🖥️\nHost Grid",key="go_host",use_container_width=True): go("Host Grid")
     with col4:
@@ -854,7 +870,7 @@ elif st.session_state.page=="Home":
         st.markdown("### 📊 Overview")
         st.markdown('<div class="section-card">', unsafe_allow_html=True)
         m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("🌐 Total IPs", total_ips)
+        m1.metric("🖧 Total IPs", total_ips)
         m2.metric("✅ Free IPs", free_ips)
         m3.metric("🔴 Assigned IPs", used_ips)
         m4.metric("🖥️ Hosts", total_hosts)
@@ -1056,7 +1072,7 @@ elif st.session_state.page=="IP Availability":
 
     st.markdown("""
     <div class="page-header">
-        <h1>🌐 IP Availability Grid</h1>
+        <h1>🖧 IP Availability Grid</h1>
         <p>Manage and monitor your IP address pool</p>
     </div>
     """, unsafe_allow_html=True)
