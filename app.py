@@ -79,7 +79,7 @@ button:focus, button:focus-visible { outline:none !important; box-shadow:none !i
 div[data-testid="stHorizontalBlock"] { border:none !important; box-shadow:none !important; border-top:0px !important; }
 
 /* ── App background ── */
-.stApp { background: #ffffff !important; }
+.stApp { background: #f0f4ff !important; }
 
 /* ── Global text ── */
 html, body, [class*="css"] { color:#1a2f6e !important; }
@@ -738,7 +738,7 @@ if st.session_state.page=="landing":
     st.markdown("""
         <div style="position:fixed;top:12px;right:16px;z-index:99999;">
             <a href="?logout=true" target="_self">
-                <button style="background:white;color:#1a2f6e;border:none;border-radius:12px;font-weight:700;padding:8px 20px;cursor:pointer;font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,0.08);">🔓 Logout</button>
+                <button style="background:#b3c2e8;color:#1a2f6e;border:none;border-radius:12px;font-weight:700;padding:8px 20px;cursor:pointer;font-size:14px;box-shadow:0 2px 8px rgba(0,0,0,0.08);">🔓 Logout</button>
             </a>
         </div>
     """, unsafe_allow_html=True)
@@ -748,11 +748,26 @@ if st.session_state.page=="landing":
         st.query_params.clear(); st.rerun()
 
     st.markdown("""<style>
-    section[data-testid="stMain"] { background:linear-gradient(145deg,#2952d9 0%,#1a3ab8 60%,#122a8a 100%) !important; min-height:100vh !important; }
-    .stApp { background:linear-gradient(145deg,#2952d9 0%,#1a3ab8 60%,#122a8a 100%) !important; }
-    div[data-testid="stButton"] > button { background:white !important; color:#1a2f6e !important; border:none !important; border-radius:20px !important; box-shadow:0 2px 8px rgba(0,0,0,0.08) !important; font-weight:700 !important; height:130px !important; font-size:16px !important; }
-    div[data-testid="stButton"] > button:hover { background:#e8eeff !important; }
-    button p { color:#1a2f6e !important; font-weight:700 !important; }
+    section[data-testid="stMain"] { background:linear-gradient(160deg,#3b6fd4 0%,#2952d9 40%,#1a3ab8 100%) !important; min-height:100vh !important; }
+    .stApp { background:linear-gradient(160deg,#3b6fd4 0%,#2952d9 40%,#1a3ab8 100%) !important; }
+    div[data-testid="stButton"] > button {
+        background:rgba(163,185,231,0.55) !important;
+        color:#1a2f6e !important;
+        border:1.5px solid rgba(255,255,255,0.25) !important;
+        border-radius:22px !important;
+        box-shadow:0 6px 24px rgba(30,60,150,0.15) !important;
+        font-weight:700 !important;
+        height:130px !important;
+        font-size:16px !important;
+        backdrop-filter:blur(10px) !important;
+        transition:0.2s ease !important;
+    }
+    div[data-testid="stButton"] > button:hover {
+        background:rgba(190,210,245,0.72) !important;
+        box-shadow:0 8px 28px rgba(30,60,150,0.22) !important;
+        transform:translateY(-3px) !important;
+    }
+    button p { color:#1a2f6e !important; font-weight:700 !important; font-size:18px !important; }
     </style>""", unsafe_allow_html=True)
 
     st.markdown('<div class="landing-title"> IP Management Portal</div>', unsafe_allow_html=True)
