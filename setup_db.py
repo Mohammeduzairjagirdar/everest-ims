@@ -12,7 +12,7 @@ c.execute("""CREATE TABLE IF NOT EXISTS auth_users (
 
 # Insert user
 c.execute("INSERT OR IGNORE INTO auth_users (email, password) VALUES (?, ?)",
-          ("ITadmin@infraon.io", "admin1234"))
+          ("itadmin@infraon.io", "admin1234"))
 
 conn.commit()
 

@@ -34,8 +34,8 @@ cur.execute("""CREATE TABLE IF NOT EXISTS auth_users (
     email TEXT UNIQUE, password TEXT
 )""")
 
-cur.execute("INSERT OR IGNORE INTO auth_users (email, password) VALUES ('ITadmin@infraon.io', 'admin1234')")
+cur.execute("INSERT OR IGNORE INTO auth_users (email, password) VALUES ('itadmin@infraon.io', 'admin1234')")
 conn.commit()
 conn.close()
 print("✅ Fresh database created!")
-print("Login: ITadmin@infraon.io / admin1234")
+print("Login: itadmin@infraon.io / admin1234")
