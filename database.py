@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS auth_users (
 # Insert default admin user if empty
 cur.execute("SELECT COUNT(*) FROM auth_users")
 if cur.fetchone()[0] == 0:
-    cur.execute("INSERT INTO auth_users (email, password) VALUES (?, ?)", ("ITadmin@infraon.io", "admin1234"))
+    cur.execute("INSERT INTO auth_users (email, password) VALUES (?, ?)", ("itadmin@infraon.io", "admin1234"))
 
 conn.commit()
 conn.close()

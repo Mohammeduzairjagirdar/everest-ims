@@ -1543,7 +1543,7 @@ elif st.session_state.page=="Audit Log":
             r6.markdown(f'<span style="font-size:12px;color:#374151;">{row["details"] or "—"}</span>', unsafe_allow_html=True)
             r7.markdown(f'<span style="background:{s_bg};color:{s_fg};border-radius:6px;padding:2px 8px;font-size:12px;font-weight:600;">{s_ico} {row["status"]}</span>', unsafe_allow_html=True)
 
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)   
         st.markdown("<br>", unsafe_allow_html=True)
 
         # ── Export button ──
@@ -1551,4 +1551,4 @@ elif st.session_state.page=="Audit Log":
         st.download_button(
             "⬇️ Export Audit Log as CSV", csv_export,
             file_name="audit_log_export.csv", mime="text/csv"
-        )
+        ) 
