@@ -287,7 +287,7 @@ if "edit_ip" not in st.session_state:
 def authenticate(email, password):
     conn = sqlite3.connect("infra.db")
     c = conn.cursor()
-    c.execute("SELECT * FROM auth_users WHERE email=? AND password=?", (email, password))
+    c.execute("SELECT * FROM auth_users WHERE LOWER(email)=LOWER(?) AND password=?", (email, password))
     user = c.fetchone()
     conn.close()
     return user
@@ -368,6 +368,7 @@ if not st.session_state.logged_in:
 # SMART CSV IMPORT FUNCTION
 # =====================================================
 def import_csv_data(df, conn):
+    """Optimized CSV import using batch operations instead of row-by-row queries"""
     import_conn = conn
     cur = import_conn.cursor()
     ip_count = 0; server_count = 0; vm_count_inserted = 0; filled_count = 0
@@ -377,68 +378,123 @@ def import_csv_data(df, conn):
         "CPU":"cpu_required","RAM(GB)":"ram_required","Disk(GB)":"storage_required",
         "VM Status":"vm_status","STATUS":"status"
     })
+    
+    # BATCH IP IMPORT - Much faster!
     if "ip_address" in df.columns:
         valid_ips = df["ip_address"].dropna().astype(str) 
         valid_ips = valid_ips[valid_ips.str.match(r'^\d+\.\d+\.\d+\.\d+$')]
-        csv_ips = valid_ips.tolist()
-        for ip in csv_ips:
-            if not validate_ip(ip): continue
-            ip = str(ip).strip()
-            existing = cur.execute("SELECT ip_address FROM ip_pool WHERE ip_address=?", (ip,)).fetchone()
-            if not existing:
-                cur.execute("INSERT OR IGNORE INTO ip_pool (ip_address, ip_status) VALUES (?, 'free')", (ip,))
-                ip_count += 1
-                if ip_count % 50 == 0: import_conn.commit()
+        csv_ips = [str(ip).strip() for ip in valid_ips.tolist() if validate_ip(str(ip).strip())]
+        
         if csv_ips:
-            try:
-                ip_objects = sorted([ipaddress.IPv4Address(str(ip).strip()) for ip in csv_ips])
-                full_range = [str(ipaddress.IPv4Address(i)) for i in range(int(ip_objects[0]), int(ip_objects[-1]) + 1)]
-                csv_ip_set = set(str(ip) for ip in ip_objects)
-                for ip in full_range:
-                    if ip not in csv_ip_set:
-                        existing = cur.execute("SELECT ip_address FROM ip_pool WHERE ip_address=?", (ip,)).fetchone()
-                        if not existing:
-                            cur.execute("INSERT OR IGNORE INTO ip_pool (ip_address, ip_status) VALUES (?, 'free')", (ip,))
-                            filled_count += 1
-            except Exception: pass
+            # Get all existing IPs in one query
+            placeholders = ','.join('?' * len(csv_ips))
+            existing_ips = set(row[0] for row in cur.execute(
+                f"SELECT ip_address FROM ip_pool WHERE ip_address IN ({placeholders})", csv_ips
+            ).fetchall())
+            
+            # Batch insert new IPs
+            new_ips = [(ip, 'free') for ip in csv_ips if ip not in existing_ips]
+            if new_ips:
+                cur.executemany("INSERT OR IGNORE INTO ip_pool (ip_address, ip_status) VALUES (?, ?)", new_ips)
+                ip_count = len(new_ips)
+            
+         
+    
+    # BATCH HOST IMPORT
     if "host_ip" in df.columns:
         valid_hosts = df["host_ip"].dropna().astype(str)
         valid_hosts = valid_hosts[valid_hosts.str.match(r'^\d+\.\d+\.\d+\.\d+$')]
-        for host_ip in valid_hosts.unique():
-            host_ip = str(host_ip).strip()
-            existing = cur.execute("SELECT server_id FROM servers WHERE host_ip=?", (host_ip,)).fetchone()
-            if not existing:
-                count = cur.execute("SELECT COUNT(*) FROM servers").fetchone()[0]
-                auto_name = f"Host-{str(count+1).zfill(2)}"
-                cur.execute("INSERT INTO servers (host_ip,server_name,server_type,total_cpu,total_ram,total_storage,status) VALUES (?,?,'Unknown',0,0,0,'active')", (host_ip,auto_name))
-                server_count += 1
+        unique_hosts = [str(h).strip() for h in valid_hosts.unique()]
+        
+        if unique_hosts:
+            # Get existing hosts in one query
+            placeholders = ','.join('?' * len(unique_hosts))
+            existing_hosts = set(row[0] for row in cur.execute(
+                f"SELECT host_ip FROM servers WHERE host_ip IN ({placeholders})", unique_hosts
+            ).fetchall())
+            
+            # Get current count once
+            count = cur.execute("SELECT COUNT(*) FROM servers").fetchone()[0]
+            
+            # Batch insert new hosts
+            new_hosts = []
+            for idx, host_ip in enumerate(unique_hosts):
+                if host_ip not in existing_hosts:
+                    auto_name = f"Host-{str(count + idx + 1).zfill(2)}"
+                    new_hosts.append((host_ip, auto_name, 'Unknown', 0, 0, 0, 'active'))
+            
+            if new_hosts:
+                cur.executemany(
+                    "INSERT INTO servers (host_ip,server_name,server_type,total_cpu,total_ram,total_storage,status) VALUES (?,?,?,?,?,?,?)",
+                    new_hosts
+                )
+                server_count = len(new_hosts)
+    
     import_conn.commit()
+    
+    # BATCH VM IMPORT
     if "vm_name" in df.columns:
+        # Pre-fetch all server IPs and VM names in bulk
+        all_host_ips = df["host_ip"].dropna().astype(str).unique().tolist() if "host_ip" in df.columns else []
+        host_to_server = {}
+        if all_host_ips:
+            placeholders = ','.join('?' * len(all_host_ips))
+            host_to_server = {row[0]: row[1] for row in cur.execute(
+                f"SELECT host_ip, server_id FROM servers WHERE host_ip IN ({placeholders})", all_host_ips
+            ).fetchall()}
+        
+        all_vm_names = df["vm_name"].dropna().astype(str).unique().tolist()
+        existing_vms = set()
+        if all_vm_names:
+            placeholders = ','.join('?' * len(all_vm_names))
+            existing_vms = set(row[0] for row in cur.execute(
+                f"SELECT vm_name FROM vm_requests WHERE vm_name IN ({placeholders})", all_vm_names
+            ).fetchall())
+        
+        # Prepare batch inserts
+        vm_inserts = []
+        ip_updates = []
+        
         for row in df.itertuples(index=False):
-            vm_name=str(getattr(row,"vm_name","")).strip(); team_name=str(getattr(row,"team_name","")).strip()
-            ip=str(getattr(row,"ip_address","")).strip(); host_ip=str(getattr(row,"host_ip","")).strip()
-            cpu=getattr(row,"cpu_required",0); ram=getattr(row,"ram_required",0); disk=getattr(row,"storage_required",0)
-            try: cpu=int(float(cpu))
-            except: cpu=0
-            try: ram=int(float(ram))
-            except: ram=0
-            try: disk=int(float(disk))
-            except: disk=0
-            if not vm_name or vm_name.lower()=="nan": continue
-            server_id=None
-            if host_ip and re.match(r'^\d+\.\d+\.\d+\.\d+$',host_ip):
-                server=cur.execute("SELECT server_id FROM servers WHERE host_ip=?",(host_ip,)).fetchone()
-                if server: server_id=server[0]
-            existing=cur.execute("SELECT vm_name FROM vm_requests WHERE vm_name=?",(vm_name,)).fetchone()
-            if not existing:
-                purpose_val=str(getattr(row,"purpose","Development")).strip()
-                purpose=purpose_val if purpose_val in ["Development","Testing","R&D"] else "Development"
-                cur.execute("INSERT INTO vm_requests (vm_name,team_name,server_id,ip_address,cpu_required,ram_required,storage_required,purpose,approval_status) VALUES (?,?,?,?,?,?,?,?,'Pending')",(vm_name,team_name,server_id,ip,cpu,ram,disk,purpose))
-                vm_count_inserted+=1
-                if ip and validate_ip(ip):
-                    cur.execute("UPDATE ip_pool SET ip_status='assigned' WHERE ip_address=?",(ip,))
+            vm_name = str(getattr(row, "vm_name", "")).strip()
+            if not vm_name or vm_name.lower() == "nan" or vm_name in existing_vms:
+                continue
+                
+            team_name = str(getattr(row, "team_name", "")).strip()
+            ip = str(getattr(row, "ip_address", "")).strip()
+            host_ip = str(getattr(row, "host_ip", "")).strip()
+            
+            try: cpu = int(float(getattr(row, "cpu_required", 0)))
+            except: cpu = 0
+            try: ram = int(float(getattr(row, "ram_required", 0)))
+            except: ram = 0
+            try: disk = int(float(getattr(row, "storage_required", 0)))
+            except: disk = 0
+            
+            server_id = host_to_server.get(host_ip, None)
+            purpose_val = str(getattr(row, "purpose", "Development")).strip()
+            purpose = purpose_val if purpose_val in ["Development", "Testing", "R&D"] else "Development"
+            
+            vm_inserts.append((vm_name, team_name, server_id, ip, cpu, ram, disk, purpose, 'Pending'))
+            
+            if ip and validate_ip(ip):
+                ip_updates.append((ip,))
+        
+        # Batch insert VMs
+        if vm_inserts:
+            cur.executemany(
+                "INSERT INTO vm_requests (vm_name,team_name,server_id,ip_address,cpu_required,ram_required,storage_required,purpose,approval_status) VALUES (?,?,?,?,?,?,?,?,?)",
+                vm_inserts
+            )
+            vm_count_inserted = len(vm_inserts)
+        
+        # Batch update IP statuses
+        if ip_updates:
+            cur.executemany("UPDATE ip_pool SET ip_status='assigned' WHERE ip_address=?", ip_updates)
+    
     import_conn.commit()
-    return ip_count,server_count,vm_count_inserted,filled_count
+    return ip_count, server_count, vm_count_inserted, filled_count
+
 
 
 def go(page_name):
