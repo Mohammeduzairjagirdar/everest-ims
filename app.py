@@ -677,6 +677,54 @@ def render_vm_drawer():
 <p style="font-size:12px;color:#2952d9;font-weight:600;margin:10px 0 0 0;">✅ Available — CPU: {available_cpu} | RAM: {available_ram} GB | Disk: {available_disk} GB</p>
 </div>""", unsafe_allow_html=True)
     purpose = st.sidebar.selectbox("Purpose", ["Development","Testing","R&D"])
+
+    # ── Testing: Assign Date + Duration ──────────────────────────────────────
+    assign_date   = None
+    duration_days = None
+    if purpose == "Testing":
+        import datetime as _dt
+        st.sidebar.markdown("#### 📅 Testing Period")
+        assign_date   = st.sidebar.date_input("Assign Date", value=_dt.date.today())
+        duration_days = st.sidebar.number_input("Duration (Days)", min_value=1, value=10)
+        expiry_date   = assign_date + _dt.timedelta(days=duration_days)
+        today         = _dt.date.today()
+        days_left     = (expiry_date - today).days
+
+        if days_left > 0:
+            status_color = "#16a34a"   # green
+            status_icon  = "🟢"
+            status_label = f"Active — {days_left} day(s) remaining"
+        else:
+            status_color = "#dc2626"   # red
+            status_icon  = "🔴"
+            status_label = "Expired" if days_left < 0 else "Expires Today!"
+
+        st.sidebar.markdown(f"""
+<div style="background:#f0f4ff;border-radius:10px;padding:12px 14px;border:1px solid #dce8ff;margin:8px 0;">
+  <table width="100%" cellspacing="0" cellpadding="4">
+    <tr>
+      <td style="font-size:12px;color:#555;font-weight:600;">📅 Assign Date</td>
+      <td style="font-size:12px;color:#1a2f6e;font-weight:700;">{assign_date.strftime('%d %b %Y')}</td>
+    </tr>
+    <tr>
+      <td style="font-size:12px;color:#555;font-weight:600;">📆 Expiry Date</td>
+      <td style="font-size:12px;color:#1a2f6e;font-weight:700;">{expiry_date.strftime('%d %b %Y')}</td>
+    </tr>
+    <tr>
+      <td style="font-size:12px;color:#555;font-weight:600;">⏱ Duration</td>
+      <td style="font-size:12px;color:#1a2f6e;font-weight:700;">{duration_days} day(s)</td>
+    </tr>
+    <tr>
+      <td colspan="2" style="padding-top:8px;">
+        <span style="background:{status_color};color:white;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700;">
+          {status_icon} {status_label}
+        </span>
+      </td>
+    </tr>
+  </table>
+</div>""", unsafe_allow_html=True)
+    # ─────────────────────────────────────────────────────────────────────────
+
     cpu  = st.sidebar.number_input("CPU Cores", min_value=1,  max_value=available_cpu,  value=min(2,  available_cpu))
     ram  = st.sidebar.number_input("RAM (GB)",  min_value=1,  max_value=available_ram,  value=min(4,  available_ram))
     disk = st.sidebar.number_input("Disk (GB)", min_value=10, max_value=available_disk, value=min(50, available_disk))
@@ -684,7 +732,8 @@ def render_vm_drawer():
     btn_cols = st.sidebar.columns(2)
     with btn_cols[0]:
         if st.button("💾 Create", use_container_width=True, key="create_vm_btn"):
-            confirm_vm_dialog(owner_name, team_name, server_choice, ip_choice, cpu, ram, disk, purpose)
+            confirm_vm_dialog(owner_name, team_name, server_choice, ip_choice, cpu, ram, disk, purpose,
+                              str(assign_date) if assign_date else None, duration_days)
     with btn_cols[1]:
         if st.button("✖ Cancel", use_container_width=True, key="cancel_vm_btn"):
             st.session_state.open_vm_drawer = False; st.rerun()
@@ -709,19 +758,32 @@ if _has_sidebar:
     st.markdown("""<style>div[data-testid="stAppViewContainer"] > section.main { margin-right:620px !important; }</style>""", unsafe_allow_html=True)
 
 @st.dialog("Confirm VM Creation")
-def confirm_vm_dialog(owner_name,team_name,server_choice,ip_choice,cpu,ram,disk,purpose):
+def confirm_vm_dialog(owner_name,team_name,server_choice,ip_choice,cpu,ram,disk,purpose,assign_date=None,duration_days=None):
     st.markdown("### ⚠️ Are you sure you want to create this VM?")
     st.write(f"**IP:** {ip_choice}")
     st.write(f"**CPU:** {cpu} cores | **RAM:** {ram} GB | **Disk:** {disk} GB")
+    if purpose == "Testing" and assign_date and duration_days:
+        import datetime as _dt
+        exp = _dt.date.fromisoformat(assign_date) + _dt.timedelta(days=int(duration_days))
+        st.write(f"**Assign Date:** {assign_date} | **Expiry:** {exp} | **Duration:** {duration_days} day(s)")
     col1,col2=st.columns(2)
     with col1:
         if st.button("✅ Yes, Create",use_container_width=True):
             cur=conn.cursor()
-            cur.execute("INSERT INTO vm_requests (vm_name,team_name,server_id,ip_address,cpu_required,ram_required,storage_required,purpose,approval_status) VALUES(?,?,?,?,?,?,?,?,?)",(owner_name,team_name,server_choice,ip_choice,cpu,ram,disk,purpose,"Pending"))
+            try:
+                cur.execute("ALTER TABLE vm_requests ADD COLUMN assign_date TEXT")
+                cur.execute("ALTER TABLE vm_requests ADD COLUMN duration_days INTEGER")
+                conn.commit()
+            except Exception:
+                pass
+            cur.execute(
+                "INSERT INTO vm_requests (vm_name,team_name,server_id,ip_address,cpu_required,ram_required,storage_required,purpose,approval_status,assign_date,duration_days) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (owner_name,team_name,server_choice,ip_choice,cpu,ram,disk,purpose,"Pending",assign_date,duration_days)
+            )
             cur.execute("UPDATE ip_pool SET ip_status='assigned' WHERE ip_address=?",(ip_choice,))
             conn.commit()
             log_action("CREATE_VM", "VM", resource_id=ip_choice,
-                       details=f"Owner: {owner_name} | Team: {team_name} | CPU: {cpu} | RAM: {ram}GB | Disk: {disk}GB | Purpose: {purpose}")
+                       details=f"Owner: {owner_name} | Team: {team_name} | CPU: {cpu} | RAM: {ram}GB | Disk: {disk}GB | Purpose: {purpose} | Assign: {assign_date} | Duration: {duration_days}d")
             st.session_state.open_vm_drawer=False; st.rerun()
     with col2:
         if st.button("❌ Cancel",use_container_width=True): st.rerun()

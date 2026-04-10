@@ -42,7 +42,9 @@ CREATE TABLE IF NOT EXISTS vm_requests (
     ram_required INTEGER,
     storage_required INTEGER,
     purpose TEXT,
-    approval_status TEXT
+    approval_status TEXT,
+    assign_date TEXT,
+    duration_days INTEGER
 )
 """)
 
