@@ -153,7 +153,7 @@ div[data-testid="stButton"] > button:hover {
     border-color: #2952d9 !important;
     color: #2952d9 !important;
 }
-button p { color:#1a2f6e !important; font-weight:700 !important; }
+button p { color:white !important; font-weight:700 !important; }
 button[kind="secondary"] p, button[kind="secondary"] span { color:#1a2f6e !important; font-weight:700 !important; }
 .stButton button p, .stButton button span, .stButton button div { color:#1a2f6e !important; font-weight:700 !important; opacity:1 !important; }
 button[data-testid="baseButton-primary"] { background:#2952d9 !important; color:white !important; border-radius:10px !important; border:none !important; font-weight:600 !important; }
@@ -255,7 +255,7 @@ section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]:last-of-ty
     background: #1a3ab8 !important;
 }
 section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]:last-of-type button p {
-    color: inherit !important;
+    color: white !important;
 }
 
 /* ── Dataframe ── */
