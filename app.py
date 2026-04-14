@@ -11,7 +11,7 @@ def validate_ip(ip):
     except:
         return False
 
-st.set_page_config(page_title="Infrastructure Portal", layout="wide")
+st.set_page_config(page_title="Infrastructure Portal", page_icon="infroanlogo.jpeg", layout="wide")
    
 
 # =====================================================
@@ -397,9 +397,6 @@ def import_csv_data(df, conn):
             if new_ips:
                 cur.executemany("INSERT OR IGNORE INTO ip_pool (ip_address, ip_status) VALUES (?, ?)", new_ips)
                 ip_count = len(new_ips)
-            
-         
-    
     # BATCH HOST IMPORT
     if "host_ip" in df.columns:
         valid_hosts = df["host_ip"].dropna().astype(str)
@@ -1669,4 +1666,4 @@ elif st.session_state.page=="Audit Log":
         st.download_button(
             "⬇️ Export Audit Log as CSV", csv_export,
             file_name="audit_log_export.csv", mime="text/csv"
-        ) 
+        )
