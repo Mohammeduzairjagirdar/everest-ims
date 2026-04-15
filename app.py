@@ -11,7 +11,7 @@ def validate_ip(ip):
     except:
         return False
 
-st.set_page_config(page_title="Infrastructure Portal", page_icon="infroanlogo.jpeg", layout="wide")
+st.set_page_config(page_title="Infrastructure Portal", page_icon="agent-logo.png", layout="wide")
    
 
 # =====================================================
