@@ -1560,6 +1560,67 @@ if "edit_ip" in st.session_state and st.session_state.edit_ip is not None and st
     purpose_idx=purpose_options.index(data["purpose"]) if pd.notna(data["purpose"]) and data["purpose"] in purpose_options else 0
     purpose=st.sidebar.selectbox("Purpose",purpose_options,index=purpose_idx)
 
+    # ── Testing Period (Edit IP) ──────────────────────────────────────────────
+    edit_assign_date   = None
+    edit_duration_days = None
+    if purpose == "Testing":
+        import datetime as _dt
+        existing_test = pd.read_sql(
+            "SELECT assign_date, duration_days FROM vm_requests WHERE ip_address=?",
+            conn, params=(ip_address,)
+        )
+        default_assign   = _dt.date.today()
+        default_duration = 10
+        if not existing_test.empty:
+            raw_ad = existing_test.iloc[0]["assign_date"]
+            raw_dd = existing_test.iloc[0]["duration_days"]
+            if raw_ad:
+                try: default_assign = _dt.date.fromisoformat(str(raw_ad))
+                except: pass
+            if raw_dd:
+                try: default_duration = int(raw_dd)
+                except: pass
+
+        st.sidebar.markdown("#### 📅 Testing Period")
+        edit_assign_date   = st.sidebar.date_input("Assign Date", value=default_assign, key="edit_ip_assign_date")
+        edit_duration_days = st.sidebar.number_input("Duration (Days)", min_value=1, value=default_duration, key="edit_ip_duration")
+        expiry_date  = edit_assign_date + _dt.timedelta(days=edit_duration_days)
+        today        = _dt.date.today()
+        days_left    = (expiry_date - today).days
+
+        if days_left > 0:
+            status_color = "#16a34a"; status_icon = "🟢"; status_label = f"Active — {days_left} day(s) remaining"
+        elif days_left == 0:
+            status_color = "#dc2626"; status_icon = "🔴"; status_label = "Expires Today!"
+        else:
+            status_color = "#dc2626"; status_icon = "🔴"; status_label = f"Expired {abs(days_left)} day(s) ago"
+
+        st.sidebar.markdown(f"""
+<div style="background:#f0f4ff;border-radius:10px;padding:12px 14px;border:1px solid #dce8ff;margin:8px 0;">
+  <table width="100%" cellspacing="0" cellpadding="4">
+    <tr>
+      <td style="font-size:12px;color:#555;font-weight:600;">📅 Assign Date</td>
+      <td style="font-size:12px;color:#1a2f6e;font-weight:700;">{edit_assign_date.strftime('%d %b %Y')}</td>
+    </tr>
+    <tr>
+      <td style="font-size:12px;color:#555;font-weight:600;">📆 Expiry Date</td>
+      <td style="font-size:12px;color:#1a2f6e;font-weight:700;">{expiry_date.strftime('%d %b %Y')}</td>
+    </tr>
+    <tr>
+      <td style="font-size:12px;color:#555;font-weight:600;">⏱ Duration</td>
+      <td style="font-size:12px;color:#1a2f6e;font-weight:700;">{edit_duration_days} day(s)</td>
+    </tr>
+    <tr>
+      <td colspan="2" style="padding-top:8px;">
+        <span style="background:{status_color};color:white;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700;">
+          {status_icon} {status_label}
+        </span>
+      </td>
+    </tr>
+  </table>
+</div>""", unsafe_allow_html=True)
+    # ─────────────────────────────────────────────────────────────────────────
+
     cpu =st.sidebar.number_input("CPU Cores",min_value=1,max_value=int(available_cpu), value=min(int(data["cpu_required"]) if pd.notna(data["cpu_required"]) else 1,int(available_cpu)))
     ram =st.sidebar.number_input("RAM (GB)", min_value=1,max_value=int(available_ram), value=min(int(data["ram_required"]) if pd.notna(data["ram_required"]) else 1,int(available_ram)))
     disk_min=min(10,int(available_disk)); disk_value=int(data["storage_required"]) if pd.notna(data["storage_required"]) else 10
@@ -1573,24 +1634,40 @@ if "edit_ip" in st.session_state and st.session_state.edit_ip is not None and st
             if not owner.strip(): st.sidebar.error("Owner name required"); st.stop()
             if not team.strip():  st.sidebar.error("Team name required");  st.stop()
             cur=conn.cursor()
+            # ensure columns exist
+            try:
+                cur.execute("ALTER TABLE vm_requests ADD COLUMN assign_date TEXT")
+                cur.execute("ALTER TABLE vm_requests ADD COLUMN duration_days INTEGER")
+                conn.commit()
+            except: pass
             existing=cur.execute("SELECT * FROM vm_requests WHERE ip_address=?",(ip_address,)).fetchone()
             if existing:
-                cur.execute("UPDATE vm_requests SET vm_name=?,team_name=?,server_id=?,cpu_required=?,ram_required=?,storage_required=?,purpose=? WHERE ip_address=?",(owner,team,server_choice,cpu,ram,disk,purpose,ip_address))
+                cur.execute(
+                    "UPDATE vm_requests SET vm_name=?,team_name=?,server_id=?,cpu_required=?,ram_required=?,storage_required=?,purpose=?,assign_date=?,duration_days=? WHERE ip_address=?",
+                    (owner,team,server_choice,cpu,ram,disk,purpose,
+                     str(edit_assign_date) if edit_assign_date else None,
+                     edit_duration_days,
+                     ip_address)
+                )
                 action_label = "EDIT_VM"
             else:
-                cur.execute("INSERT INTO vm_requests (ip_address,vm_name,team_name,server_id,cpu_required,ram_required,storage_required,purpose) VALUES(?,?,?,?,?,?,?,?)",(ip_address,owner,team,server_choice,cpu,ram,disk,purpose))
+                cur.execute(
+                    "INSERT INTO vm_requests (ip_address,vm_name,team_name,server_id,cpu_required,ram_required,storage_required,purpose,assign_date,duration_days) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (ip_address,owner,team,server_choice,cpu,ram,disk,purpose,
+                     str(edit_assign_date) if edit_assign_date else None,
+                     edit_duration_days)
+                )
                 action_label = "CREATE_VM"
             cur.execute("UPDATE ip_pool SET ip_status=? WHERE ip_address=?",(status,ip_address))
             conn.commit()
             log_action(action_label, "VM", resource_id=ip_address,
-                       details=f"Owner: {owner} | Team: {team} | CPU: {cpu} | RAM: {ram}GB | Disk: {disk}GB | Status: {status} | Purpose: {purpose}")
+                       details=f"Owner: {owner} | Team: {team} | CPU: {cpu} | RAM: {ram}GB | Disk: {disk}GB | Status: {status} | Purpose: {purpose} | Assign: {edit_assign_date} | Duration: {edit_duration_days}d")
             st.session_state.edit_ip=None; st.rerun()
     with c2:
         if st.button("Cancel",use_container_width=True):
             st.session_state.edit_ip=None
             if "edit_server" in st.session_state: del st.session_state.edit_server
             st.rerun()
-
 # =====================================================
 # AUDIT LOG PAGE
 # =====================================================
