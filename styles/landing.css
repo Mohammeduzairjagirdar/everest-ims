@@ -1,0 +1,13 @@
+section[data-testid="stMain"] { background:linear-gradient(160deg,#3b6fd4 0%,#2952d9 40%,#1a3ab8 100%) !important; min-height:100vh !important; }
+.stApp { background:linear-gradient(160deg,#3b6fd4 0%,#2952d9 40%,#1a3ab8 100%) !important; }
+div[data-testid="stButton"] > button {
+    background:rgba(163,185,231,0.55) !important;
+    color:#1a2f6e !important;
+    border:1.5px solid rgba(255,255,255,0.25) !important;
+    border-radius:22px !important;
+    box-shadow:0 6px 24px rgba(30,60,150,0.15) !important;
+    font-weight:700 !important;
+    height:130px !important;
+    backdrop-filter:blur(10px) !important;
+    transition:0.2s ease !important;
+}

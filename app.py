@@ -397,6 +397,9 @@ def import_csv_data(df, conn):
             if new_ips:
                 cur.executemany("INSERT OR IGNORE INTO ip_pool (ip_address, ip_status) VALUES (?, ?)", new_ips)
                 ip_count = len(new_ips)
+            
+         
+    
     # BATCH HOST IMPORT
     if "host_ip" in df.columns:
         valid_hosts = df["host_ip"].dropna().astype(str)
@@ -1253,18 +1256,55 @@ elif st.session_state.page=="IP Availability":
     if st.session_state.get("show_ip_records", False):
         st.markdown('<div class="section-title">📋 IP Records</div>', unsafe_allow_html=True)
 
-        h1,h2,h3,h4,h5,h6,h7,h8,h9,h10,h11=st.columns([1.3,1.3,1.4,1.4,1,1,1.2,1.3,1.2,1,1.4])
-        for col,label in zip([h1,h2,h3,h4,h5,h6,h7,h8,h9,h10,h11],["**IP Address**","**Host IP**","**Owner**","**Team**","**CPU**","**RAM**","**Disk**","**Purpose**","**Server**","**Status**","**Actions**"]):
+        import datetime as _dt
+
+        h1,h2,h3,h4,h5,h6,h7,h8,h9,h10,h11,h12=st.columns([1.2,1.2,1.3,1.3,0.8,0.8,1,1.2,1,0.9,1.3,1.3])
+        for col,label in zip([h1,h2,h3,h4,h5,h6,h7,h8,h9,h10,h11,h12],
+            ["**IP Address**","**Host IP**","**Owner**","**Team**","**CPU**","**RAM**","**Disk**","**Purpose**","**Server**","**Status**","**Expiry**","**Actions**"]):
             col.markdown(label)
         st.markdown("---")
 
         for i,row in page_df.iterrows():
-            c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11=st.columns([1.3,1.3,1.4,1.4,1,1,1.2,1.3,1.2,1,1.4])
-            status_badge = f'<span style="background:#dcfce7;color:#166534;border-radius:6px;padding:2px 8px;font-size:12px;font-weight:600;">free</span>' if row["Status"]=="free" else f'<span style="background:#dbeafe;color:#1d4ed8;border-radius:6px;padding:2px 8px;font-size:12px;font-weight:600;">assigned</span>'
+            c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12=st.columns([1.2,1.2,1.3,1.3,0.8,0.8,1,1.2,1,0.9,1.3,1.3])
+            status_badge = (
+                f'<span style="background:#dcfce7;color:#166534;border-radius:6px;padding:2px 8px;font-size:12px;font-weight:600;">free</span>'
+                if row["Status"]=="free" else
+                f'<span style="background:#dbeafe;color:#1d4ed8;border-radius:6px;padding:2px 8px;font-size:12px;font-weight:600;">assigned</span>'
+            )
+
+            # ── Expiry badge for Testing VMs ──
+            expiry_badge = '<span style="color:#9ca3af;font-size:12px;">—</span>'
+            if row["Purpose"] == "Testing":
+                vm_row = pd.read_sql(
+                    "SELECT assign_date, duration_days FROM vm_requests WHERE ip_address=?",
+                    conn, params=(row["IP Address"],)
+                )
+                if not vm_row.empty:
+                    assign_date_raw = vm_row.iloc[0]["assign_date"]
+                    duration_raw    = vm_row.iloc[0]["duration_days"]
+                    if assign_date_raw and duration_raw:
+                        try:
+                            assign_d  = _dt.date.fromisoformat(str(assign_date_raw))
+                            expiry_d  = assign_d + _dt.timedelta(days=int(duration_raw))
+                            today     = _dt.date.today()
+                            days_left = (expiry_d - today).days
+
+                            if days_left < 0:
+                                expiry_badge = f'<span style="background:#fee2e2;color:#991b1b;border-radius:6px;padding:2px 7px;font-size:11px;font-weight:700;">🔴 Expired {abs(days_left)}d ago</span>'
+                            elif days_left == 0:
+                                expiry_badge = f'<span style="background:#fee2e2;color:#991b1b;border-radius:6px;padding:2px 7px;font-size:11px;font-weight:700;">🔴 Expires Today</span>'
+                            elif days_left <= 3:
+                                expiry_badge = f'<span style="background:#fef9c3;color:#854d0e;border-radius:6px;padding:2px 7px;font-size:11px;font-weight:700;">🟡 {days_left}d left</span>'
+                            else:
+                                expiry_badge = f'<span style="background:#dcfce7;color:#166534;border-radius:6px;padding:2px 7px;font-size:11px;font-weight:700;">🟢 {days_left}d left</span>'
+                        except:
+                            pass
+
             c1.write(row["IP Address"]); c2.write(row["Host IP"]); c3.write(row["Owner"]); c4.write(row["Team"])
             c5.write(row["CPU"]); c6.write(row["RAM"]); c7.write(row["Disk"]); c8.write(row["Purpose"])
-            c9.write(row["Server"]); c10.markdown(status_badge,unsafe_allow_html=True)
-            with c11:
+            c9.write(row["Server"]); c10.markdown(status_badge, unsafe_allow_html=True)
+            c11.markdown(expiry_badge, unsafe_allow_html=True)
+            with c12:
                 a1,a2=st.columns([1,1],gap="small")
                 with a1:
                     if st.button("✏️",key=f"edit_{i}"):
@@ -1290,6 +1330,7 @@ elif st.session_state.page=="IP Availability":
 # HOST GRID PAGE
 # =====================================================
 elif st.session_state.page=="Host Grid":
+    st.session_state.open_vm_drawer = False  # VM drawer only opens from IP Availability page
     colb1,colb2=st.columns([1,9])
     with colb1:
         if st.button("⬅ Home",key="back_home_host"):
@@ -1376,9 +1417,6 @@ elif st.session_state.page=="Host Grid":
         with sb2:
             if st.button("✖ Cancel",use_container_width=True,key="cancel_new_host"):
                 st.session_state.open_host_drawer=False; st.rerun()
-
-    # CREATE VM SIDEBAR — shared function
-    render_vm_drawer()
 
     # SERVER CAPACITY TABLE
     st.markdown("<br>",unsafe_allow_html=True)
@@ -1666,4 +1704,4 @@ elif st.session_state.page=="Audit Log":
         st.download_button(
             "⬇️ Export Audit Log as CSV", csv_export,
             file_name="audit_log_export.csv", mime="text/csv"
-        )
+        ) 

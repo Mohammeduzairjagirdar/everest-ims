@@ -1,0 +1,254 @@
+
+/* ── Dialog fixes ── */
+button[aria-label="Close"] { display:none !important; }
+div[role="dialog"] > div {
+    background:#ffffff !important; border-radius:16px !important;
+    border: none !important; box-shadow:0 8px 40px rgba(41,82,217,0.18) !important;
+    padding:28px !important; max-height:80vh !important; overflow-y:auto !important;
+}
+div[role="dialog"] h2, div[role="dialog"] h3 { color:#1a2f6e !important; font-weight:700 !important; }
+div[role="dialog"] p { color:#374151 !important; }
+div[role="dialog"] code { background:#e8eeff !important; color:#1a3ab8 !important; padding:4px 8px; border-radius:6px; font-weight:600; }
+div[role="dialog"] button:first-of-type { background:#e11d48 !important; color:white !important; border:none !important; border-radius:10px !important; }
+div[role="dialog"] button:first-of-type:hover { background:#be123c !important; }
+div[role="dialog"] button:last-of-type { background:#e8eeff !important; color:#1a2f6e !important; border:none !important; border-radius:10px !important; }
+div[data-testid="stDialog"] { display:flex !important; align-items:center !important; justify-content:center !important; }
+div[role="dialog"] { pointer-events:all !important; margin:auto !important; top:auto !important; }
+div[role="dialog"] button { margin-top:12px !important; }
+div[role="dialog"] div[data-testid="stHorizontalBlock"] { margin-top:18px !important; }
+div[data-testid="stModal"] { position:fixed !important; inset:0 !important; display:flex !important; align-items:center !important; justify-content:center !important; padding:0 !important; margin:0 !important; }
+div[data-testid="stModal"] > div { margin:0 auto !important; transform:none !important; }
+div[data-testid="stModalBackdrop"] { position:fixed !important; inset:0 !important; background:rgba(26,58,184,0.3) !important; backdrop-filter:blur(4px) !important; }
+body:has(div[data-testid="stModal"]) { overflow:hidden !important; }
+[data-testid="stDialog"] { position:fixed !important; inset:0 !important; display:flex !important; align-items:center !important; justify-content:center !important; padding-top:0px !important; }
+[data-testid="stDialog"] > div { margin-top:0px !important; }
+[data-testid="stDialogOverlay"] { position:fixed !important; inset:0 !important; background:rgba(26,58,184,0.3) !important; backdrop-filter:blur(3px); }
+div[data-testid="stDialog"], div[role="dialog"] { z-index:20000 !important; }
+div[data-testid="stDialogOverlay"] { z-index:19999 !important; }
+
+/* ── Layout & spacing ── */
+.block-container { padding-top:0rem !important; padding-bottom:0rem !important; margin-top:0rem !important; }
+.main .block-container { padding-top:0rem !important; margin-top:0rem !important; }
+.stAppViewContainer { height:auto !important; }
+[data-testid="column"] { align-self:flex-start !important; }
+[data-testid="stVerticalBlock"] { padding-bottom:0rem !important; margin-bottom:0rem !important; }
+div[data-testid="element-container"] { margin-bottom:0rem !important; border-top:none !important; }
+div[data-testid="stAppViewContainer"] > section.main > div { padding-top:0rem !important; }
+div[data-testid="stAppViewContainer"] > section { padding-top:0px !important; margin-top:0px !important; }
+div[data-testid="stAppViewContainer"] { padding-top:0px !important; }
+section[data-testid="stMain"] > div { padding-top:0rem !important; }
+section[data-testid="stMain"] > div:first-child { border-top:none !important; box-shadow:none !important; padding-top:0 !important; }
+section[data-testid="stMain"] { border-top:none !important; }
+div[data-testid="block-container"]::before { display:none !important; content:none !important; background:none !important; height:0px !important; }
+.main .block-container::before { display:none !important; }
+
+/* ── Header/toolbar hide ── */
+header[data-testid="stHeader"] { display:none !important; height:0px !important; min-height:0px !important; border-bottom:0px !important; box-shadow:none !important; }
+div[data-testid="stToolbar"] { display:none !important; }
+[data-testid="stDecoration"] { display:none !important; height:0px !important; }
+div[data-testid="stDecoration"] { display:none !important; height:0px !important; }
+hr { display:none !important; border:none !important; height:0px !important; margin:0px !important; }
+[data-testid="stMarkdownContainer"] hr { display:none !important; }
+a[href^="#"] { display:none !important; }
+h1 > a, h2 > a, h3 > a { display:none !important; }
+h1::after, h2::after, h3::after { display:none !important; content:none !important; }
+:target { outline:none !important; border:none !important; }
+:focus-visible { outline:none !important; }
+button:focus, button:focus-visible { outline:none !important; box-shadow:none !important; }
+div[data-testid="stHorizontalBlock"] { border:none !important; box-shadow:none !important; border-top:0px !important; }
+
+/* ── App background ── */
+.stApp { background: #f0f4ff !important; }
+
+/* ── Global text ── */
+html, body, [class*="css"] { color:#1a2f6e !important; }
+h1, h2, h3, h4, h5, h6 { color:#1a2f6e !important; font-weight:700 !important; }
+label { color:#1a3ab8 !important; font-weight:600 !important; }
+input, textarea { color:#1a2f6e !important; }
+div[data-baseweb="select"] div { color:#1a2f6e !important; }
+::placeholder { color:#7a9acc !important; }
+[data-testid="stHeader"] { background:transparent; }
+
+/* ── Metric cards ── */
+[data-testid="stMetric"] {
+    background: white !important;
+    border-radius: 14px !important;
+    padding: 16px 20px !important;
+    box-shadow: 0 2px 12px rgba(41,82,217,0.10) !important;
+    border: 1px solid #dce8ff !important;
+}
+[data-testid="stMetric"] > div { border:none !important; }
+[data-testid="stMetricValue"] { color:#1a2f6e !important; font-weight:800 !important; font-size:2rem !important; }
+[data-testid="stMetricLabel"] { color:#2952d9 !important; font-weight:600 !important; }
+thead tr th { color:#1a2f6e !important; font-weight:700 !important; background:#e8eeff !important; }
+tbody tr td { color:#1a2f6e !important; }
+
+/* ── Page header band ── */
+.page-header {
+    background: linear-gradient(135deg, #2952d9 0%, #1a3ab8 100%);
+    border-radius: 16px;
+    padding: 24px 32px;
+    margin-bottom: 24px;
+    color: white;
+}
+.page-header h1 { color: white !important; font-size: 28px !important; margin: 0 !important; }
+.page-header p  { color: rgba(255,255,255,0.85) !important; margin: 4px 0 0 0 !important; font-size: 14px !important; }
+
+/* ── Section cards ── */
+.section-card {
+    background: white;
+    border-radius: 14px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 12px rgba(41,82,217,0.08);
+    border: 1px solid #dce8ff;
+}
+.section-card:hover {
+    transform: translateY(-4px);
+    transition: 0.25s ease;
+}
+.section-title {
+    font-size: 16px !important;
+    font-weight: 700 !important;
+    color: #1a2f6e !important;
+    margin-bottom: 14px !important;
+    padding-bottom: 8px !important;
+    border-bottom: 2px solid #e8eeff !important;
+}
+
+/* ── Buttons (global) ── */
+div[data-testid="stButton"] > button {
+    background: white !important;
+    color: #1a2f6e !important;
+    border-radius: 10px !important;
+    border: 1.5px solid #b3c2e8 !important;
+    font-weight: 600 !important;
+    padding: 0.45rem 1.2rem !important;
+    transition: 0.2s ease !important;
+    font-size: 14px;
+}
+div[data-testid="stButton"] > button:hover {
+    background: #e8eeff !important;
+    border-color: #2952d9 !important;
+    color: #2952d9 !important;
+}
+button p { color:white !important; font-weight:700 !important; }
+button[kind="secondary"] p, button[kind="secondary"] span { color:#1a2f6e !important; font-weight:700 !important; }
+.stButton button p, .stButton button span, .stButton button div { color:#1a2f6e !important; font-weight:700 !important; opacity:1 !important; }
+button[data-testid="baseButton-primary"] { background:#2952d9 !important; color:white !important; border-radius:10px !important; border:none !important; font-weight:600 !important; }
+button[data-testid="baseButton-primary"]:hover { background:#1a3ab8 !important; }
+div[data-testid="stFormSubmitButton"] > button { background:#2952d9 !important; color:white !important; border-radius:10px !important; border:none !important; font-weight:600 !important; }
+div[data-testid="stFormSubmitButton"] > button:hover { background:#1a3ab8 !important; }
+div[data-testid="stDownloadButton"] > button { background:white !important; color:#1a2f6e !important; border-radius:10px !important; border:1.5px solid #b3c2e8 !important; font-weight:600 !important; padding:0.45rem 1.2rem !important; }
+div[data-testid="stDownloadButton"] > button:hover { background:#e8eeff !important; border-color:#2952d9 !important; }
+
+/* ── Back button special ── */
+button[data-testid="baseButton-back_home_ip"],
+button[data-testid="baseButton-back_home_host"],
+button[data-testid="baseButton-back_home_dashboard"] {
+    background: white !important;
+    border: 1.5px solid #b3c2e8 !important;
+    color: #1a2f6e !important;
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+}
+
+/* ── Landing nav buttons ── */
+button[data-testid="baseButton-go_dashboard"],
+button[data-testid="baseButton-go_ip"],
+button[data-testid="baseButton-go_host"],
+button[data-testid="baseButton-go_audit"] {
+    color:#1a2f6e !important; height:220px !important; width:100% !important;
+    border-radius:22px !important; background:#b3c2e8 !important;
+    border:none !important;
+    display:flex !important; flex-direction:column !important;
+    align-items:center !important; justify-content:center !important;
+    gap:14px; font-size:0px !important;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08) !important;
+}
+button[data-testid="baseButton-go_dashboard"]:hover,
+button[data-testid="baseButton-go_ip"]:hover,
+button[data-testid="baseButton-go_host"]:hover,
+button[data-testid="baseButton-go_audit"]:hover { background:#c5d0f0 !important; }
+
+button[data-testid="baseButton-go_dashboard"] p,
+button[data-testid="baseButton-go_ip"] p,
+button[data-testid="baseButton-go_host"] p,
+button[data-testid="baseButton-go_audit"] p {
+    color:#1a2f6e !important; font-weight:700 !important;
+    margin:0 !important; line-height:1.2 !important;
+}
+button[data-testid="baseButton-go_dashboard"] p:first-child,
+button[data-testid="baseButton-go_ip"] p:first-child,
+button[data-testid="baseButton-go_host"] p:first-child,
+button[data-testid="baseButton-go_audit"] p:first-child { font-size:60px !important; }
+button[data-testid="baseButton-go_dashboard"] p:last-child,
+button[data-testid="baseButton-go_ip"] p:last-child,
+button[data-testid="baseButton-go_host"] p:last-child,
+button[data-testid="baseButton-go_audit"] p:last-child { font-size:20px !important; font-weight:700 !important; }
+
+/* ── Landing page ── */
+.landing-title { text-align:center !important; font-size:48px !important; font-weight:700 !important; color:white !important; -webkit-text-fill-color:white !important; margin-bottom:8px; }
+.landing-sub { text-align:center !important; font-size:16px !important; color:rgba(255,255,255,0.85) !important; margin-bottom:60px; }
+.landing-wrapper { max-width:1000px; margin:auto; margin-top:0px; text-align:center; }
+.action-row { display:flex; gap:6px; align-items:center; }
+
+/* ── Sidebar ── */
+section[data-testid="stSidebar"] {
+    position:fixed !important; right:0 !important; left:auto !important;
+    top:0 !important; height:100vh !important;
+    width:620px !important; min-width:620px !important; max-width:620px !important;
+    background: white !important;
+    border-left: 2px solid #dce8ff !important;
+    z-index:1000 !important;
+}
+section[data-testid="stSidebar"] > div:first-child {
+    width:620px !important; padding:28px !important;
+    display:flex !important; flex-direction:column !important; height:100vh !important; overflow-y:auto !important;
+}
+section[data-testid="stSidebarContent"] { padding-bottom:0px !important; }
+section[data-testid="stSidebar"] div[data-testid="stSidebarHeader"] { display:none !important; height:0px !important; padding:0px !important; margin:0px !important; }
+section[data-testid="stSidebar"] .block-container { padding-top:0px !important; margin-top:0px !important; flex-grow:1 !important; display:flex !important; flex-direction:column !important; }
+section[data-testid="stSidebar"] div:first-child > div:first-child { margin-top:0px !important; padding-top:0px !important; }
+section[data-testid="stSidebar"] button { height:42px !important; font-weight:600 !important; }
+section[data-testid="stSidebar"] .stTextInput,
+section[data-testid="stSidebar"] .stNumberInput,
+section[data-testid="stSidebar"] .stSelectbox { width:100% !important; }
+section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] {
+    flex-direction:row !important; display:flex !important; gap:10px !important; margin-bottom:0px !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] > div { flex:1 !important; width:auto !important; }
+section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]:last-of-type {
+    margin-top:auto !important; position:sticky !important; bottom:0 !important;
+    background:white !important; padding:16px 0 20px 0 !important;
+    border-top:2px solid #dce8ff !important; z-index:10 !important;
+}
+section[data-testid="stSidebar"] .stButton button { margin-bottom:0px !important; }
+button[data-testid="collapsedControl"] { display:none !important; }
+
+/* ── Sidebar save button blue ── */
+section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]:last-of-type button:first-child {
+    background: #2952d9 !important; color: white !important; border: none !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]:last-of-type button:first-child:hover {
+    background: #1a3ab8 !important;
+}
+section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]:last-of-type button p {
+    color: white !important;
+}
+
+/* ── Dataframe ── */
+[data-testid="stDataFrame"] { border-radius: 12px !important; overflow: hidden !important; border: 1px solid #dce8ff !important; }
+
+/* ── Expander ── */
+[data-testid="stExpander"] { border: 1.5px solid #dce8ff !important; border-radius: 12px !important; background: white !important; }
+[data-testid="stExpanderToggleIcon"] { color: #2952d9 !important; }
+
+/* ── CSV Import Page ── */
+.csv-import-page {
+    min-height: 100vh;
+    background: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
