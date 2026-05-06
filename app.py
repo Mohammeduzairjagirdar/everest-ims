@@ -178,7 +178,8 @@ button[data-testid="baseButton-back_home_dashboard"] {
 button[data-testid="baseButton-go_dashboard"],
 button[data-testid="baseButton-go_ip"],
 button[data-testid="baseButton-go_host"],
-button[data-testid="baseButton-go_audit"] {
+button[data-testid="baseButton-go_audit"]
+button[data-testid="baseButton-go_provision"] {
     color:#1a2f6e !important; height:220px !important; width:100% !important;
     border-radius:22px !important; background:#b3c2e8 !important;
     border:none !important;
@@ -914,7 +915,7 @@ if st.session_state.page=="landing":
             st.rerun()
 
     st.markdown("<br>", unsafe_allow_html=True)
-    col1,col2,col3,col4=st.columns(4,gap="large")
+    col1,col2,col3,col4,col5=st.columns(5,gap="large")
     with col1:
         if st.button("📊\nDashboard",key="go_dashboard",use_container_width=True): go("Home")
     with col2:
@@ -923,6 +924,9 @@ if st.session_state.page=="landing":
         if st.button("🖥️\nHost Grid",key="go_host",use_container_width=True): go("Host Grid")
     with col4:
         if st.button("📋\nAudit Log",key="go_audit",use_container_width=True): go("Audit Log")
+    with col5:
+        if st.button("🚀\nProvision VM", key="go_provision", use_container_width=True):
+           go("Provision")    
 
     st.markdown("""<div style="position:fixed;bottom:20px;left:0;right:0;text-align:center;color:rgba(255,255,255,0.85);font-size:20px;font-weight:700;letter-spacing:1px;">© 2026 Infraon IT</div>""", unsafe_allow_html=True)
 
@@ -1178,6 +1182,485 @@ elif st.session_state.page=="Home":
 
         st.markdown('</div>', unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
+
+# =====================================================
+# TEAM → HYPERVISOR/CLOUD WORKFLOW
+# =====================================================
+# HOW TO ADD THIS TO YOUR app.py:
+#
+# STEP 1: Add "go_provision" to your landing page buttons:
+#
+#   with col_new:   # add a 5th column
+#       if st.button("🚀\nProvision VM", key="go_provision", use_container_width=True):
+#           go("Provision")
+#
+# STEP 2: Paste this entire block just before your
+#         "elif st.session_state.page == 'IP Availability':" section.
+#
+# STEP 3: Add "Provision" to the go() routing — already handled since go() just
+#         sets st.session_state["page"] and reruns.
+# =====================================================
+
+elif st.session_state.page == "Provision":
+    import datetime as _dt
+    import plotly.express as px
+    import plotly.graph_objects as go
+
+    # ── Back button ────────────────────────────────────────────────────────
+    colb1, _ = st.columns([1, 9])
+    with colb1:
+        if st.button("⬅ Home", key="back_provision"):
+            st.session_state.page = "landing"
+            for k in ["prov_team", "prov_platform_type", "prov_platform"]:
+                st.session_state.pop(k, None)
+            st.rerun()
+
+    st.markdown("""
+    <div class="page-header">
+        <h1>🚀 Provision VM</h1>
+        <p>Select your team and target platform to get started</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Dark mode aware plotly colors ─────────────────────────────────────
+    dark = st.session_state.get("dark_mode", False)
+    plotly_paper_bg = "#1a1f2e" if dark else "white"
+    plotly_plot_bg  = "#1a1f2e" if dark else "white"
+    plotly_font_col = "#e2e8f0" if dark else "#1a2f6e"
+    plotly_grid_col = "#2d3748" if dark else "#e8eeff"
+
+    # ── Platform definitions ───────────────────────────────────────────────
+    HYPERVISORS = {
+        "VMware":  {"icon": "🟦", "color": "#1565c0", "bg": "#e3f2fd"},
+        "KVM":     {"icon": "🟩", "color": "#2e7d32", "bg": "#e8f5e9"},
+        "Citrix":  {"icon": "🟧", "color": "#e65100", "bg": "#fff3e0"},
+    }
+    CLOUDS = {
+        "AWS":          {"icon": "🟡", "color": "#f57c00", "bg": "#fff8e1"},
+        "Azure":        {"icon": "🔵", "color": "#0277bd", "bg": "#e1f5fe"},
+        "Oracle Cloud": {"icon": "🔴", "color": "#c62828", "bg": "#ffebee"},
+        "GCP":          {"icon": "🟢", "color": "#2e7d32", "bg": "#e8f5e9"},
+    }
+
+    # ─────────────────────────────────────────────────────────────────────
+    # STEP 1 — Team selector
+    # ─────────────────────────────────────────────────────────────────────
+    teams_in_db = pd.read_sql(
+        "SELECT DISTINCT team_name FROM vm_requests WHERE team_name IS NOT NULL ORDER BY team_name",
+        conn
+    )["team_name"].tolist()
+    all_teams = ["-- Select Team --"] + teams_in_db + ["+ Add New Team"]
+
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">👥 Step 1 — Choose Team</div>', unsafe_allow_html=True)
+
+    sel_col1, sel_col2 = st.columns([3, 5])
+    with sel_col1:
+        chosen_team_raw = st.selectbox(
+            "Team", all_teams, key="prov_team_select",
+            label_visibility="collapsed"
+        )
+
+    # Handle "Add New Team"
+    new_team_name = ""
+    if chosen_team_raw == "+ Add New Team":
+        with sel_col2:
+            new_team_name = st.text_input("New team name", placeholder="e.g. Platform-Engineering", key="new_team_input")
+        chosen_team = new_team_name.strip() if new_team_name.strip() else None
+    elif chosen_team_raw == "-- Select Team --":
+        chosen_team = None
+    else:
+        chosen_team = chosen_team_raw
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Persist chosen team in session
+    if chosen_team:
+        st.session_state["prov_team"] = chosen_team
+    team = st.session_state.get("prov_team")
+
+    # ─────────────────────────────────────────────────────────────────────
+    # STEP 2 — Platform type selector (only if team chosen)
+    # ─────────────────────────────────────────────────────────────────────
+    if team:
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-title">🖥️ Step 2 — Platform Type &nbsp;<span style="font-weight:400;color:#6b7280;">for team <b>{team}</b></span></div>', unsafe_allow_html=True)
+
+        pt_cols = st.columns(2)
+        with pt_cols[0]:
+            if st.button("🏢  On-Prem Hypervisor\n(VMware / KVM / Citrix)",
+                         key="btn_onprem", use_container_width=True):
+                st.session_state["prov_platform_type"] = "onprem"
+                st.session_state.pop("prov_platform", None)
+                st.rerun()
+        with pt_cols[1]:
+            if st.button("☁️  Public Cloud\n(AWS / Azure / GCP / Oracle)",
+                         key="btn_cloud", use_container_width=True):
+                st.session_state["prov_platform_type"] = "cloud"
+                st.session_state.pop("prov_platform", None)
+                st.rerun()
+
+        platform_type = st.session_state.get("prov_platform_type")
+
+        # ── Hypervisor cards ────────────────────────────────────────────
+        if platform_type == "onprem":
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("#### Choose Hypervisor")
+            hv_cols = st.columns(len(HYPERVISORS))
+            for idx, (hv_name, hv_meta) in enumerate(HYPERVISORS.items()):
+                with hv_cols[idx]:
+                    selected = st.session_state.get("prov_platform") == hv_name
+                    border = f"3px solid {hv_meta['color']}" if selected else f"1px solid #dce8ff"
+                    st.markdown(f"""
+                    <div style="border-radius:14px;padding:20px 14px;text-align:center;
+                         background:{hv_meta['bg']};border:{border};cursor:pointer;margin-bottom:8px;">
+                        <span style="font-size:36px;">{hv_meta['icon']}</span>
+                        <p style="margin:6px 0 0 0;font-weight:700;color:{hv_meta['color']};font-size:16px;">{hv_name}</p>
+                    </div>""", unsafe_allow_html=True)
+                    if st.button(f"Select {hv_name}", key=f"sel_hv_{hv_name}", use_container_width=True):
+                        st.session_state["prov_platform"] = hv_name
+                        st.rerun()
+
+        # ── Cloud cards ─────────────────────────────────────────────────
+        elif platform_type == "cloud":
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown("#### Choose Cloud Provider")
+            cl_cols = st.columns(len(CLOUDS))
+            for idx, (cl_name, cl_meta) in enumerate(CLOUDS.items()):
+                with cl_cols[idx]:
+                    selected = st.session_state.get("prov_platform") == cl_name
+                    border = f"3px solid {cl_meta['color']}" if selected else f"1px solid #dce8ff"
+                    st.markdown(f"""
+                    <div style="border-radius:14px;padding:20px 14px;text-align:center;
+                         background:{cl_meta['bg']};border:{border};cursor:pointer;margin-bottom:8px;">
+                        <span style="font-size:36px;">{cl_meta['icon']}</span>
+                        <p style="margin:6px 0 0 0;font-weight:700;color:{cl_meta['color']};font-size:16px;">{cl_name}</p>
+                    </div>""", unsafe_allow_html=True)
+                    if st.button(f"Select {cl_name}", key=f"sel_cl_{cl_name}", use_container_width=True):
+                        st.session_state["prov_platform"] = cl_name
+                        st.rerun()
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────────────────────────────────
+    # STEP 3 — Stats + Resources + Inline VM Form
+    # ─────────────────────────────────────────────────────────────────────
+    platform      = st.session_state.get("prov_platform")
+    platform_type = st.session_state.get("prov_platform_type")
+
+    if team and platform:
+        meta = (HYPERVISORS if platform_type == "onprem" else CLOUDS).get(platform, {})
+        icon  = meta.get("icon", "🖥️")
+        color = meta.get("color", "#2952d9")
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div style="background:linear-gradient(135deg,{color}22,{color}11);
+             border:2px solid {color}44;border-radius:16px;padding:16px 24px;margin-bottom:20px;">
+            <h3 style="margin:0;color:{color};">{icon} {team} &nbsp;›&nbsp; {platform}</h3>
+            <p style="margin:4px 0 0 0;color:#6b7280;font-size:14px;">
+                {'On-Prem Hypervisor' if platform_type == 'onprem' else 'Public Cloud Provider'}
+            </p>
+        </div>""", unsafe_allow_html=True)
+
+        # ── Fetch team VMs on this platform ──────────────────────────────
+        if platform_type == "onprem":
+            team_vms = pd.read_sql("""
+                SELECT vr.vm_name, vr.ip_address, vr.cpu_required, vr.ram_required,
+                       vr.storage_required, vr.purpose, vr.approval_status,
+                       vr.assign_date, vr.duration_days,
+                       s.server_name, s.host_ip, s.server_type
+                FROM vm_requests vr
+                LEFT JOIN servers s ON vr.server_id = s.server_id
+                WHERE LOWER(vr.team_name) = LOWER(?)
+                  AND LOWER(s.server_type) LIKE LOWER(?)
+                ORDER BY vr.vm_name
+            """, conn, params=(team, f"%{platform}%"))
+
+            # servers of this type for capacity
+            platform_servers = pd.read_sql(
+                "SELECT * FROM servers WHERE LOWER(server_type) LIKE LOWER(?)",
+                conn, params=(f"%{platform}%",)
+            )
+
+        else:
+            # Cloud: tagged by purpose or a cloud column (use purpose as proxy)
+            team_vms = pd.read_sql("""
+                SELECT vr.vm_name, vr.ip_address, vr.cpu_required, vr.ram_required,
+                       vr.storage_required, vr.purpose, vr.approval_status,
+                       vr.assign_date, vr.duration_days,
+                       s.server_name, s.host_ip, s.server_type
+                FROM vm_requests vr
+                LEFT JOIN servers s ON vr.server_id = s.server_id
+                WHERE LOWER(vr.team_name) = LOWER(?)
+                ORDER BY vr.vm_name
+            """, conn, params=(team,))
+            platform_servers = pd.DataFrame()   # no on-prem servers for cloud view
+
+        # ── Stat cards ────────────────────────────────────────────────────
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">📊 Team Stats</div>', unsafe_allow_html=True)
+
+        total_team_vms  = len(team_vms)
+        total_team_cpu  = int(team_vms["cpu_required"].sum())  if not team_vms.empty else 0
+        total_team_ram  = int(team_vms["ram_required"].sum())  if not team_vms.empty else 0
+        total_team_disk = int(team_vms["storage_required"].sum()) if not team_vms.empty else 0
+
+        ms1, ms2, ms3, ms4, ms5 = st.columns(5)
+        ms1.metric("⚙️ VMs",           total_team_vms)
+        ms2.metric("🖥️ vCPU (cores)", total_team_cpu)
+        ms3.metric("💾 RAM (GB)",      total_team_ram)
+        ms4.metric("💿 Disk (GB)",     total_team_disk)
+        ms5.metric("🏢 Platform",      platform)
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Resource utilization charts (only on-prem) ────────────────────
+        if platform_type == "onprem" and not platform_servers.empty:
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+            st.markdown(f'<div class="section-title">🖥️ {platform} Host Capacity</div>', unsafe_allow_html=True)
+
+            vm_usage_ps = pd.read_sql("""
+                SELECT server_id,
+                       COALESCE(SUM(cpu_required),0)  AS used_cpu,
+                       COALESCE(SUM(ram_required),0)  AS used_ram,
+                       COALESCE(SUM(storage_required),0) AS used_disk
+                FROM vm_requests WHERE server_id IS NOT NULL GROUP BY server_id
+            """, conn)
+            vm_usage_ps["server_id"] = pd.to_numeric(vm_usage_ps["server_id"], errors="coerce").astype("Int64")
+            ps = platform_servers.copy()
+            ps["server_id"] = pd.to_numeric(ps["server_id"], errors="coerce").astype("Int64")
+            cap = ps.merge(vm_usage_ps, on="server_id", how="left").fillna(0)
+            cap["cpu_pct"]  = (cap["used_cpu"]  / cap["total_cpu"].replace(0,1)  * 100).round(1)
+            cap["ram_pct"]  = (cap["used_ram"]  / cap["total_ram"].replace(0,1)  * 100).round(1)
+            cap["disk_pct"] = (cap["used_disk"] / cap["total_storage"].replace(0,1) * 100).round(1)
+
+            if not cap.empty:
+                fig_cap = go.Figure()
+                fig_cap.add_trace(go.Bar(name="CPU %",  x=cap["server_name"], y=cap["cpu_pct"],  marker_color=color))
+                fig_cap.add_trace(go.Bar(name="RAM %",  x=cap["server_name"], y=cap["ram_pct"],  marker_color=color+"99"))
+                fig_cap.add_trace(go.Bar(name="Disk %", x=cap["server_name"], y=cap["disk_pct"], marker_color=color+"55"))
+                fig_cap.update_layout(
+                    barmode="group", title=f"{platform} Host Utilization (%)",
+                    paper_bgcolor=plotly_paper_bg, plot_bgcolor=plotly_plot_bg,
+                    title_font_color=plotly_font_col, font=dict(color=plotly_font_col),
+                    yaxis=dict(gridcolor=plotly_grid_col, range=[0, 110]),
+                    margin=dict(t=40, b=10, l=10, r=10)
+                )
+                st.plotly_chart(fig_cap, use_container_width=True, key="chart_platform_cap")
+
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Cloud placeholder cards ───────────────────────────────────────
+        if platform_type == "cloud":
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+            st.markdown(f'<div class="section-title">☁️ {platform} Configuration</div>', unsafe_allow_html=True)
+
+            cloud_regions = {
+                "AWS":          ["us-east-1", "us-west-2", "eu-west-1", "ap-south-1", "ap-southeast-1"],
+                "Azure":        ["East US", "West Europe", "Southeast Asia", "Central India", "UK South"],
+                "Oracle Cloud": ["ap-mumbai-1", "us-ashburn-1", "eu-frankfurt-1", "ap-sydney-1"],
+                "GCP":          ["us-central1", "europe-west1", "asia-south1", "asia-southeast1"],
+            }
+            instance_types = {
+                "AWS":          ["t3.micro", "t3.small", "t3.medium", "m5.large", "m5.xlarge", "c5.2xlarge"],
+                "Azure":        ["Standard_B1s", "Standard_B2s", "Standard_D2s_v3", "Standard_D4s_v3", "Standard_F4s"],
+                "Oracle Cloud": ["VM.Standard.E4.Flex", "VM.Standard3.Flex", "BM.Standard3.64"],
+                "GCP":          ["e2-micro", "e2-small", "e2-medium", "n2-standard-2", "n2-standard-4"],
+            }
+
+            cc1, cc2 = st.columns(2)
+            with cc1:
+                cloud_region = st.selectbox(
+                    f"{platform} Region",
+                    cloud_regions.get(platform, ["Default"]),
+                    key="cloud_region"
+                )
+            with cc2:
+                cloud_instance = st.selectbox(
+                    "Instance Type",
+                    instance_types.get(platform, ["Default"]),
+                    key="cloud_instance"
+                )
+
+
+            st.markdown(f"""
+            <div style="background:#f0f9ff;border-radius:10px;padding:12px 16px;
+                 border:1px solid #bae6fd;margin-top:12px;">
+                <p style="margin:0;font-size:13px;color:#0369a1;font-weight:600;">
+                    ☁️ &nbsp; {platform} &nbsp;›&nbsp; {cloud_region} &nbsp;›&nbsp; {cloud_instance}
+                </p>
+                <p style="margin:4px 0 0 0;font-size:12px;color:#6b7280;">
+                    Cloud-tagged VM will be recorded with this provider and region.
+                </p>
+            </div>""", unsafe_allow_html=True)
+
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("<br>", unsafe_allow_html=True)
+
+        # ── Existing VMs for this team on this platform ───────────────────
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-title">📋 Existing VMs — {team} on {platform}</div>', unsafe_allow_html=True)
+
+        if team_vms.empty:
+            st.markdown(f"""
+            <div style="text-align:center;padding:30px;">
+                <p style="font-size:32px;margin:0;">📭</p>
+                <p style="color:#6b7280;">No VMs found for <b>{team}</b> on <b>{platform}</b></p>
+            </div>""", unsafe_allow_html=True)
+        else:
+            today = _dt.date.today()
+
+            def expiry_badge(row):
+                if row.get("purpose") != "Testing":
+                    return "—"
+                try:
+                    ad = _dt.date.fromisoformat(str(row["assign_date"]))
+                    exp = ad + _dt.timedelta(days=int(row["duration_days"]))
+                    dl = (exp - today).days
+                    if dl < 0:
+                        return f'<span style="background:#fee2e2;color:#991b1b;border-radius:6px;padding:2px 7px;font-size:11px;font-weight:700;">🔴 Expired</span>'
+                    elif dl <= 3:
+                        return f'<span style="background:#fef9c3;color:#854d0e;border-radius:6px;padding:2px 7px;font-size:11px;font-weight:700;">🟡 {dl}d left</span>'
+                    else:
+                        return f'<span style="background:#dcfce7;color:#166534;border-radius:6px;padding:2px 7px;font-size:11px;font-weight:700;">🟢 {dl}d left</span>'
+                except:
+                    return "—"
+
+            # header
+            eh1,eh2,eh3,eh4,eh5,eh6,eh7,eh8 = st.columns([2,2,1,1,1,1.5,1.5,1.5])
+            for col,lbl in zip([eh1,eh2,eh3,eh4,eh5,eh6,eh7,eh8],
+                               ["**VM Name**","**IP**","**CPU**","**RAM**","**Disk**","**Purpose**","**Server**","**Expiry**"]):
+                col.markdown(lbl)
+            st.markdown("---")
+            for _, row in team_vms.iterrows():
+                c1,c2,c3,c4,c5,c6,c7,c8 = st.columns([2,2,1,1,1,1.5,1.5,1.5])
+                c1.write(str(row["vm_name"]) if row["vm_name"] else "—")
+                c2.write(str(row["ip_address"]) if row["ip_address"] else "—")
+                c3.write(int(row["cpu_required"])     if row["cpu_required"]     else 0)
+                c4.write(int(row["ram_required"])     if row["ram_required"]     else 0)
+                c5.write(int(row["storage_required"]) if row["storage_required"] else 0)
+                c6.write(str(row["purpose"])          if row["purpose"]          else "—")
+                c7.write(str(row["server_name"])      if row["server_name"]      else "Cloud")
+                c8.markdown(expiry_badge(row), unsafe_allow_html=True)
+
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ─────────────────────────────────────────────────────────────────
+        # INLINE VM CREATION FORM
+        # ─────────────────────────────────────────────────────────────────
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.markdown(f'<div class="section-title">➕ Create New VM — {team} on {platform}</div>', unsafe_allow_html=True)
+
+        free_ips_df = pd.read_sql("SELECT ip_address FROM ip_pool WHERE ip_status='free'", conn)
+
+        if free_ips_df.empty:
+            st.warning("⚠️ No free IPs available. Add IPs to the pool first.")
+        else:
+            with st.form(f"provision_vm_form_{team}_{platform}"):
+                f1, f2 = st.columns(2)
+                with f1:
+                    vm_owner = st.text_input("Owner / VM Name", value="", placeholder="e.g. dev-server-01")
+                    vm_ip    = st.selectbox("Assign IP", free_ips_df["ip_address"].tolist())
+                    purpose  = st.selectbox("Purpose", ["Development", "Testing", "R&D"])
+
+                with f2:
+                    vm_cpu   = st.number_input("CPU Cores", min_value=1, max_value=128, value=2)
+                    vm_ram   = st.number_input("RAM (GB)",  min_value=1, max_value=4096, value=4)
+                    vm_disk  = st.number_input("Disk (GB)", min_value=10, max_value=100000, value=50)
+
+                # ── Server selection (on-prem) / Cloud info ───────────────
+                chosen_server_id = None
+                if platform_type == "onprem" and not platform_servers.empty:
+                    st.markdown(f"**{platform} Server**")
+                    srv_options = platform_servers["server_id"].tolist()
+                    chosen_server_id = st.selectbox(
+                        "Server",
+                        options=srv_options,
+                        format_func=lambda x: platform_servers.loc[
+                            platform_servers["server_id"] == x, "server_name"
+                        ].values[0],
+                        key="prov_server_select"
+                    )
+                elif platform_type == "cloud":
+                    reg = st.session_state.get("cloud_region", "")
+                    inst = st.session_state.get("cloud_instance", "")
+                    st.markdown(f"""
+                    <div style="background:#f0f9ff;border-radius:8px;padding:10px 14px;border:1px solid #bae6fd;">
+                        <p style="margin:0;font-size:13px;font-weight:600;color:#0369a1;">
+                            ☁️ {platform} &nbsp;·&nbsp; {reg} &nbsp;·&nbsp; {inst}
+                        </p>
+                    </div>""", unsafe_allow_html=True)
+
+                # ── Testing period ────────────────────────────────────────
+                assign_date_val   = None
+                duration_days_val = None
+                if purpose == "Testing":
+                    st.markdown("**📅 Testing Period**")
+                    td1, td2 = st.columns(2)
+                    with td1:
+                        assign_date_val   = st.date_input("Assign Date", value=_dt.date.today(), key="prov_assign_date")
+                    with td2:
+                        duration_days_val = st.number_input("Duration (Days)", min_value=1, value=10, key="prov_duration")
+
+                submitted = st.form_submit_button("🚀 Create VM", use_container_width=True)
+
+                if submitted:
+                    if not vm_owner.strip():
+                        st.error("Owner / VM Name is required.")
+                    else:
+                        cur = conn.cursor()
+                        # Ensure columns exist
+                        for col_def in [
+                            "ALTER TABLE vm_requests ADD COLUMN assign_date TEXT",
+                            "ALTER TABLE vm_requests ADD COLUMN duration_days INTEGER",
+                            "ALTER TABLE vm_requests ADD COLUMN cloud_provider TEXT",
+                            "ALTER TABLE vm_requests ADD COLUMN cloud_region TEXT",
+                            "ALTER TABLE vm_requests ADD COLUMN cloud_instance TEXT",
+                        ]:
+                            try: cur.execute(col_def); conn.commit()
+                            except: pass
+
+                        cloud_prov  = platform if platform_type == "cloud" else None
+                        cloud_reg   = st.session_state.get("cloud_region")   if platform_type == "cloud" else None
+                        cloud_inst  = st.session_state.get("cloud_instance") if platform_type == "cloud" else None
+
+                        cur.execute("""
+                            INSERT INTO vm_requests
+                                (vm_name, team_name, server_id, ip_address,
+                                 cpu_required, ram_required, storage_required,
+                                 purpose, approval_status,
+                                 assign_date, duration_days,
+                                 cloud_provider, cloud_region, cloud_instance)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        """, (
+                            vm_owner.strip(), team, chosen_server_id, vm_ip,
+                            vm_cpu, vm_ram, vm_disk,
+                            purpose, "Pending",
+                            str(assign_date_val) if assign_date_val else None,
+                            duration_days_val,
+                            cloud_prov, cloud_reg, cloud_inst
+                        ))
+                        cur.execute("UPDATE ip_pool SET ip_status='assigned' WHERE ip_address=?", (vm_ip,))
+                        conn.commit()
+
+                        log_action(
+                            "CREATE_VM", "VM", resource_id=vm_ip,
+                            details=(
+                                f"Owner: {vm_owner} | Team: {team} | Platform: {platform} "
+                                f"| CPU: {vm_cpu} | RAM: {vm_ram}GB | Disk: {vm_disk}GB "
+                                f"| Purpose: {purpose}"
+                                + (f" | Cloud: {cloud_prov}/{cloud_reg}/{cloud_inst}" if cloud_prov else "")
+                                + (f" | Assign: {assign_date_val} | Duration: {duration_days_val}d" if assign_date_val else "")
+                            )
+                        )
+                        st.success(f"✅ VM **{vm_owner}** created on {platform} with IP {vm_ip}!")
+                        st.rerun()
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
 # =====================================================
 # IP AVAILABILITY PAGE
@@ -1737,13 +2220,13 @@ elif st.session_state.page=="Audit Log":
         if sel_resource != "All": filtered = filtered[filtered["resource"] == sel_resource]
         if sel_status   != "All": filtered = filtered[filtered["status"]   == sel_status]
 
-        # ── Action colour map ──
+        # ── Action colour map ── #
         action_colours = {
             "CREATE_VM":          ("#dcfce7","#166534"),
             "EDIT_VM":            ("#dbeafe","#1d4ed8"),
             "RELEASE_IP":         ("#fef9c3","#854d0e"),
             "CREATE_HOST":        ("#f3e8ff","#6b21a8"),
-            "EDIT_HOST":          ("#e0f2fe","#0369a1"),
+            "EDIT_HOST":          ("#e0f2fe","#0369a1"),                
             "CSV_IMPORT":         ("#fce7f3","#9d174d"),
             "CSV_IMPORT_HOSTS":   ("#fce7f3","#9d174d"),
         }
@@ -1781,4 +2264,4 @@ elif st.session_state.page=="Audit Log":
         st.download_button(
             "⬇️ Export Audit Log as CSV", csv_export,
             file_name="audit_log_export.csv", mime="text/csv"
-        ) 
+        )  #

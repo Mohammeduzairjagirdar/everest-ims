@@ -1,4 +1,0 @@
-server_id,server_name,total_cpu,total_ram,total_storage,status
-1,KVM,32,128,500,Active
-2,VMware,48,256,500,Active
-3,Hypervisor,24,64,500,Active
