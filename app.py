@@ -1438,9 +1438,14 @@ elif st.session_state.page == "Provision":
 
             if not cap.empty:
                 fig_cap = go.Figure()
+                def hex_to_rgba(hex_color, alpha):
+                    hex_color = hex_color.lstrip('#')
+                    r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+                    return f"rgba({r},{g},{b},{alpha})"
+
                 fig_cap.add_trace(go.Bar(name="CPU %",  x=cap["server_name"], y=cap["cpu_pct"],  marker_color=color))
-                fig_cap.add_trace(go.Bar(name="RAM %",  x=cap["server_name"], y=cap["ram_pct"],  marker_color=color+"99"))
-                fig_cap.add_trace(go.Bar(name="Disk %", x=cap["server_name"], y=cap["disk_pct"], marker_color=color+"55"))
+                fig_cap.add_trace(go.Bar(name="RAM %",  x=cap["server_name"], y=cap["ram_pct"],  marker_color=hex_to_rgba(color, 0.6)))
+                fig_cap.add_trace(go.Bar(name="Disk %", x=cap["server_name"], y=cap["disk_pct"], marker_color=hex_to_rgba(color, 0.33)))
                 fig_cap.update_layout(
                     barmode="group", title=f"{platform} Host Utilization (%)",
                     paper_bgcolor=plotly_paper_bg, plot_bgcolor=plotly_plot_bg,
@@ -2264,4 +2269,4 @@ elif st.session_state.page=="Audit Log":
         st.download_button(
             "⬇️ Export Audit Log as CSV", csv_export,
             file_name="audit_log_export.csv", mime="text/csv"
-        )  #
+        )  
